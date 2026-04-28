@@ -1,0 +1,20 @@
+# Local testing & generated assets
+**.akuna/data
+
+# Local development files, caches, build-outputs etc.
+*.env*
+.direnv
+.devshell-bin
+.agents/planning/*
+!.agents/planning/.gitkeep
+*.log
+**.old*
+target/
+node_modules/
+dist/
+
+# General common file patterns
+.DS_Store
+.Trash
+*.tmp*
+*.tar*

@@ -1,0 +1,35 @@
+default_job = "all"
+
+env.RUSTC_WRAPPER = "sccache"
+
+[jobs.all]
+command = ["./build/scripts/ws-all.sh"]
+need_stdout = true
+
+[jobs.fix]
+command = ["./build/scripts/ws-fix.sh"]
+need_stdout = true
+
+[jobs.check]
+command = ["./build/scripts/ws-check.sh"]
+need_stdout = true
+
+[jobs.test]
+command = ["./build/scripts/ws-test.sh"]
+need_stdout = true
+
+[jobs.bench]
+command = [
+  "cargo",
+  "bench",
+  "-p",
+  "akuna-core",
+  "--all-features",
+  "--",
+  "--quick"
+]
+need_stdout = true
+
+[keybindings]
+shift-a = "job:all"
+shift-b = "job:bench"

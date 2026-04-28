@@ -1,0 +1,47 @@
+[workspace]
+resolver = "3"
+members = ["src-crates/app", "src-crates/core", "src-crates/core-macros"]
+
+[workspace.package]
+authors = ["Akuna Team"]
+repository = "https://github.com/akunasoftware/akuna"
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.93.1"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+thiserror = "2.0.18"
+tokio = { version = "1.52.0", features = ["full"] }
+dirs = "6.0.0"
+walkdir = "2.5.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+lto = false
+strip = false
+opt-level = 0
+codegen-units = 256
+
+[profile.release]
+lto = true
+strip = true
+opt-level = 3
+panic = 'abort'
+codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".agents/brain/style.md",
+    ".agents/brain/codestyle.md",
+    ".agents/brain/workflow.md"
+  ]
+}

@@ -1,0 +1,45 @@
+[graph]
+targets = []
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+ignore = []
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "allow"
+
+[licenses]
+version = 2
+confidence-threshold = 0.95
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSL-1.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib"
+]
+exceptions = [
+  # burn, burn-store, cubecl, and wgpu stack
+  { allow = ["bzip2-1.0.6"], name = "libbz2-rs-sys" },
+
+  # hf-hub via ureq/rustls TLS stack
+  { allow = ["CDLA-Permissive-2.0"], name = "webpki-root-certs" },
+  { allow = ["CDLA-Permissive-2.0"], name = "webpki-roots" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+  "https://github.com/akunasoftware/burn-embed",
+  "https://github.com/akunasoftware/burn-magika",
+]
