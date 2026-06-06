@@ -1,52 +1,45 @@
-# Extraction Namespace
+# File Extraction
 
-`akuna_core::extraction` extracts file metadata, text content, and text chunks.
-Feature-gated behind `extraction`.
+Extracts text, structured parts, and metadata from files on disk.
+File type is detected via Magika and routed to PDF, office document, EPUB, or
+generic text extraction.
 
-Use `extract_file` for the high-level extraction flow.
-The default config returns metadata only.
-
-## How To Use It
-
-Configure `ExtractionConfig` around the output you want back.
-Metadata is cheap and default.
-Content extraction reads the file body and uses detected file type to choose an extractor.
-Chunking derives chunks from extracted content and can return chunks without returning full content.
-
-| Option                 | Effect                                                    |
-| ---------------------- | --------------------------------------------------------- |
-| `return_metadata`      | Return inferred file metadata and detected type.          |
-| `return_content`       | Return extracted text content.                            |
-| `return_chunking`      | Return text chunks derived from extracted content.        |
-| `text.prefer_markdown` | Prefer Markdown output where extractors support it.       |
-| `chunking`             | Configure target size and delimiters for returned chunks. |
-
-## Full Configuration
+## Usage
 
 ```rust
-use std::collections::HashMap;
+use akuna_core::extraction::{extract_file, ExtractionConfig};
 
-use akuna_core::{
-    ChunkingConfig, ExtractionConfig, TextExtractionConfig,
-    extraction::extract_file,
-};
-
-let mut delimiters_by_ft = HashMap::new();
-delimiters_by_ft.insert("md".to_string(), b"\n\n".to_vec());
-
-let config = ExtractionConfig {
-    return_metadata: true,
-    return_content: true,
-    return_chunking: true,
-    text: Some(TextExtractionConfig {
-        prefer_markdown: true,
-    }),
-    chunking: Some(ChunkingConfig {
-        target_size: Some(512),
-        delimiters_by_ft,
-        delimiters: Some(b"\n".to_vec()),
-    }),
-};
-
-let result = extract_file("./notes.md", &config).await?;
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ExtractionConfig {
+        return_metadata: true,
+        return_content: true,
+        ..ExtractionConfig::default()
+    };
+    let result = extract_file("path/to/file.pdf", &config).await?;
+    println!("{}", result.text.unwrap());
+    Ok(())
+}
 ```
+
+## Configuration
+
+`ExtractionConfig` controls which outputs are produced:
+
+| Field             | Effect                                              |
+| ----------------- | --------------------------------------------------- |
+| `return_metadata` | Include inferred file metadata in the result.       |
+| `return_content`  | Include text derived from parts in the result.      |
+| `return_parts`    | Include structured content parts in the result.     |
+
+Metadata inference does not read file contents.
+Content is only read when `return_content` or `return_parts` is enabled.
+
+## Supported Formats
+
+- PDF (`.pdf`) via `pdf_oxide`
+- Word (`.doc`, `.docx`) and PowerPoint (`.pptx`) via `office_oxide`
+- EPUB (`.epub`) via `rbook`
+- Markdown, RTF, RSS, XHTML, XML, plain text via `omniparse`
+- Source code: Bash, C, C++, C#, CSS, Dart, Go, GraphQL, Groovy, HCL/Terraform, HTML, Java, JavaScript, JSON, Lua, PHP, Python, Ruby, Rust, Scala, SCSS, SQL, Svelte, Swift, TOML, TypeScript, Vue, YAML
+
+Unsupported types return `FileExtractionError::UnsupportedFileType`.

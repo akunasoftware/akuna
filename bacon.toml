@@ -1,4 +1,5 @@
 default_job = "all"
+wrap = false
 
 env.RUSTC_WRAPPER = "sccache"
 
@@ -18,18 +19,21 @@ need_stdout = true
 command = ["./build/scripts/ws-test.sh"]
 need_stdout = true
 
-[jobs.bench]
+[jobs.serve]
 command = [
   "cargo",
-  "bench",
+  "run",
   "-p",
-  "akuna-core",
-  "--all-features",
+  "akuna",
   "--",
-  "--quick"
+  "--log-level",
+  "trace",
+  "serve"
 ]
-need_stdout = true
 
 [keybindings]
 shift-a = "job:all"
-shift-b = "job:bench"
+shift-f = "job:fix"
+shift-c = "job:check"
+shift-t = "job:test"
+shift-s = "job:serve"

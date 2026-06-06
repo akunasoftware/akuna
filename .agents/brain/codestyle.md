@@ -21,6 +21,17 @@
 - No inline imports in function signatures, e.g. `crate::appconfig::AppConfig`.
 - Prefer `crate::` absolute imports over `super::` cross-module imports.
 
+### Module Exports
+
+- `lib.rs`: expose only feature modules with `pub mod <feature>`.
+- Feature `mod.rs`: keep internals private by default.
+- Public API: explicit `pub use`; never wildcard-export `::*`.
+- Public errors: typed per feature, exported from feature root.
+- Public call points: root-level or one deliberate domain module; do not mix casually.
+- Nested modules public only when stable API, e.g. `extraction::document`.
+- Vendor, model, generated modules stay private.
+- Use `pub(crate)` only when another module truly imports it.
+
 ### Tests
 
 - Test names: short, strongly implicit from module path.

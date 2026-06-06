@@ -25,10 +25,7 @@
         system:
         let
           lib = nixpkgs.lib;
-          linuxOciSystems = [
-            "x86_64-linux"
-            "aarch64-linux"
-          ];
+          guestSystemFor = system: lib.replaceStrings [ "darwin" ] [ "linux" ] system;
           overlays = [ (import rust-overlay) ];
           mkPkgs =
             targetSystem:
@@ -48,39 +45,20 @@
             inherit system overlays;
           };
           mainPackage = pkgs.callPackage ./build/package-main.nix { };
-          debugPackage = pkgs.callPackage ./build/package-main.nix { buildType = "debug"; };
           mkOciPackage =
-            targetSystem: debug:
+            targetSystem:
             let
               ociPkgs = mkPkgs targetSystem;
-              ociMainPackage = ociPkgs.callPackage ./build/package-main.nix {
-                buildType = if debug then "debug" else "release";
-              };
+              ociMainPackage = ociPkgs.callPackage ./build/package-main.nix { };
             in
             ociPkgs.callPackage ./build/package-oci.nix {
               mainPackage = ociMainPackage;
-              inherit debug;
             };
-          ociPackages = lib.genAttrs linuxOciSystems (
-            targetSystem: mkOciPackage targetSystem false
-          );
-          ociDebugPackages = lib.genAttrs linuxOciSystems (
-            targetSystem: mkOciPackage targetSystem true
-          );
         in
         {
           packages = {
             default = mainPackage;
-            debug = debugPackage;
-          }
-          // lib.mapAttrs' (targetSystem: package: lib.nameValuePair "oci-${targetSystem}" package) ociPackages
-          // lib.mapAttrs'
-            (targetSystem: package: lib.nameValuePair "oci-${targetSystem}-debug" package)
-            ociDebugPackages;
-
-          checks = {
-            default = mainPackage;
-            debug = debugPackage;
+            oci = mkOciPackage (guestSystemFor system);
           };
 
           devShells.default = import ./build/shell-dev.nix {

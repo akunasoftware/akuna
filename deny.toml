@@ -32,14 +32,9 @@ exceptions = [
   { allow = ["bzip2-1.0.6"], name = "libbz2-rs-sys" },
 
   # hf-hub via ureq/rustls TLS stack
-  { allow = ["CDLA-Permissive-2.0"], name = "webpki-root-certs" },
   { allow = ["CDLA-Permissive-2.0"], name = "webpki-roots" },
 ]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = [
-  "https://github.com/akunasoftware/burn-embed",
-  "https://github.com/akunasoftware/burn-magika",
-]

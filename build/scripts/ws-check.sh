@@ -6,5 +6,6 @@ set -euo pipefail
 cargo fmt --all --check
 cargo clippy --quiet --workspace --all-features --all-targets
 cargo check --quiet --workspace --all-features
-cargo machete
+cargo doc --no-deps --all-features --package akuna-core
 cargo deny check --allow=no-license-field
+cargo machete

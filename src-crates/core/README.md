@@ -1,65 +1,66 @@
-<h1>
-  <img src="../../assets/icon-gradient.svg" alt="" width="36" align="left">
-  Akuna Core Library
-</h1>
+# akuna-core
 
-Reusable library APIs for document extraction, text chunking, embeddings, and graph storage.
+Knowledge tooling library with feature-gated modules for detection, embedding,
+extraction, OCR, reranking, and graph storage.
 
-See the [workspace README](../../README.md) for feature overview.
+See the [workspace README](../../README.md) for the feature overview.
 
-## Extraction
+## Modules
 
-Use `extract_file` for the high-level extraction flow.
-The default config returns metadata only.
+| Module       | Feature      | Purpose                                |
+| ------------ | ------------ | -------------------------------------- |
+| `detection`  | `detection`  | File-type detection                    |
+| `embedding`  | `embedding`  | Text embeddings                        |
+| `extraction` | `extraction` | File extraction                        |
+| `layout`     | `layout`     | Document layout detection              |
+| `ocr`        | `ocr`        | Image text recognition                 |
+| `reranking`  | `reranking`  | Text reranking                         |
+| `storage`    | `storage`    | Graph storage and retrieval            |
 
-#### Minimal Example. See [`akuna_core::extraction`](./src/extraction/) for more details.
+The `full` feature enables every optional module above.
 
-```rust
-use akuna_core::{ExtractionConfig, extraction::extract_file};
+## Examples
 
+### Extraction
+
+```rust,no_run
+use akuna_core::extraction::{extract_file, ExtractionConfig};
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
 let result = extract_file("./notes.md", &ExtractionConfig::default()).await?;
+# Ok(())
+# }
 ```
 
-## Chunking
+### Embedding
 
-Use `chunk_text` directly when content is already available.
+```rust,no_run
+use akuna_core::embedding::{TextEmbedding, TextEmbeddingOptions};
 
-#### Minimal Example. See [`akuna_core::chunking`](./src/chunking/) for more details.
-
-```rust
-use akuna_core::chunking::chunk_text;
-
-let chunks = chunk_text(None, "hello\nworld", Some("txt"));
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let model = TextEmbedding::new(TextEmbeddingOptions::default()).await?;
+    let embedding = model.embed("Hello world")?;
+    Ok(())
+}
 ```
 
-## Embedding
+### Storage
 
-Use `model` to load the default model once and reuse it across calls.
+```rust,no_run
+use akuna_core::storage::graph::{
+    in_memory_context, GraphDbContext, GraphNode,
+};
 
-#### Minimal Example. See [`akuna_core::embedding`](./src/embedding/) for more details.
-
-```rust
-use akuna_core::embedding;
-
-let model = embedding::model().await?;
-
-let embedding = model.embed("Hello world")?;
-```
-
-## Graph
-
-Use [`graph`](./src/graph/) when storing domain data as typed graph nodes and edges.
-
-#### Minimal Example. See [`akuna_core::graph`](./src/graph/) for more details.
-
-```rust
-use akuna_core::graph::knowledge::Concept;
-
-let concept = Concept {
+# fn main() {
+let ctx = in_memory_context();
+let node = GraphNode {
     id: "rust".to_string(),
     labels: vec!["Concept".to_string(), "Language".to_string()],
     name: "Rust".to_string(),
     description: None,
     metadata: None,
 };
+ctx.put_node(&node, &[]).expect("node stored");
+# }
 ```

@@ -1,49 +1,59 @@
+//! Metadata extraction entry points.
+
 use std::path::Path;
 
-use burn_wgpu::Wgpu;
+use crate::extraction::{ExtractionMetadata, FileExtractionError};
 
-use crate::types::extraction::{
-    DetectedFileType, ExtractionMetadata, FileExtractionError,
-};
+/// Detect or infer file type and assemble metadata from raw bytes.
+///
+/// # Errors
+///
+/// Returns [`FileExtractionError`] if enabled detection fails.
+pub(in crate::extraction) fn from_bytes(
+    bytes: &[u8],
+    source_path: Option<&Path>,
+) -> Result<ExtractionMetadata, FileExtractionError> {
+    let detected = detect_content_type(bytes)?;
+    let extension = source_path.and_then(|path| {
+        path.extension()
+            .map(|extension| extension.to_string_lossy().into_owned())
+    });
+    let stem = source_path.and_then(|path| {
+        path.file_stem()
+            .map(|file_stem| file_stem.to_string_lossy().into_owned())
+    });
 
-pub(super) struct FileMetadata {
-    pub(super) detected_type: DetectedFileType,
-    pub(super) metadata: ExtractionMetadata,
-}
-
-/// Uses and returns Magika filetype detection, alongside basic useful file meta
-pub(super) async fn extract_metadata(
-    file_path: &Path,
-) -> Result<FileMetadata, FileExtractionError> {
-    let detected_type = detect_file_type(file_path).await?;
-    let extension = file_path
-        .extension()
-        .map(|extension| extension.to_string_lossy().into_owned());
-    let stem = file_path
-        .file_stem()
-        .map(|file_stem| file_stem.to_string_lossy().into_owned());
-
-    Ok(FileMetadata {
-        metadata: ExtractionMetadata {
-            stem,
-            extension,
-            label: detected_type.label.clone(),
-            mime_type: detected_type.mime_type.clone(),
-            description: detected_type.description.clone(),
-        },
-        detected_type,
+    Ok(ExtractionMetadata {
+        stem,
+        extension,
+        label: detected.label,
+        mime_type: detected.mime_type,
+        description: detected.description,
+        is_text: detected.is_text,
+        hash: blake3::hash(bytes).to_hex().to_string(),
     })
 }
 
-/// Uses Google "Magika" ML model to intelligently infer file type from given path
-async fn detect_file_type(
-    file_path: &Path,
-) -> Result<DetectedFileType, FileExtractionError> {
-    let device = burn_wgpu::WgpuDevice::DefaultDevice;
-    let mut magika = burn_magika::Session::<Wgpu>::new(&device)?;
-    let type_info = magika.identify_file_async(file_path).await?.info();
+/// Detection result used internally before assembling full metadata.
+struct DetectionResult {
+    mime_type: String,
+    label: String,
+    description: String,
+    is_text: bool,
+}
 
-    Ok(DetectedFileType {
+/// Detect file type from bytes using the Magika ML model.
+///
+/// # Errors
+///
+/// Returns [`FileExtractionError`] if the Magika session fails to load or infer.
+fn detect_content_type(
+    bytes: &[u8],
+) -> Result<DetectionResult, FileExtractionError> {
+    let mut magika = crate::detection::Session::new_default()?;
+    let type_info = magika.identify_content_sync(bytes)?.info();
+
+    Ok(DetectionResult {
         mime_type: type_info.mime_type.to_string(),
         label: type_info.label.to_string(),
         description: type_info.description.to_string(),

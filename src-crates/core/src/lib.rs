@@ -1,43 +1,60 @@
-//! Shared public API's for common actions across the library.
+//! Akuna core knowledge tooling library.
+//!
+//! Provides optional feature-gated modules for file-type detection,
+//! embeddings, extraction, layout, OCR, reranking, and graph storage.
+//! Consumers enable only the features they need.
+//!
+//! # Modules
+//!
+//! - [`detection`] — file-type detection (feature `detection`)
+//! - [`embedding`] — text embeddings (feature `embedding`)
+//! - [`extraction`] — file extraction (feature `extraction`)
+//! - [`layout`] — document layout detection (feature `layout`)
+//! - [`ocr`] — image OCR engines (feature `ocr`)
+//! - [`reranking`] — text reranking (feature `reranking`)
+//! - [`storage`] — graph storage and retrieval (feature `storage`)
+//!
+//! # Example
+//!
+//! Enable the `extraction` feature and call a module function:
+//!
+//! ```ignore
+//! use akuna_core::extraction::{document, ExtractionConfig};
+//!
+//! # async fn example() -> Result<(), akuna_core::extraction::FileExtractionError> {
+//! let result = document::from_path("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
+//! # Ok(())
+//! # }
+//! ```
 
-extern crate self as akuna_core;
+/// File-type detection APIs.
+#[cfg(feature = "detection")]
+pub mod detection;
 
-/// Text chunking APIs.
-#[cfg(feature = "chunking")]
-pub mod chunking;
+/// Text embeddings.
+#[cfg(feature = "embedding")]
+pub mod embedding;
 
-/// Platform-aware application directories.
-pub mod dirs;
+/// Text reranking APIs.
+#[cfg(feature = "reranking")]
+pub mod reranking;
+
+/// Image OCR APIs.
+#[cfg(feature = "ocr")]
+pub mod ocr;
+
+/// Document layout detection APIs.
+#[cfg(feature = "layout")]
+pub mod layout;
+
+/// Shared ML model helpers.
+#[cfg(feature = "ml")]
+mod ml;
 
 /// File extraction APIs.
 #[cfg(feature = "extraction")]
 pub mod extraction;
 
-/// Internal testing utilities.
-#[cfg(any(test, feature = "testing"))]
-pub mod testing;
-
-/// Storage indexing & retrieval APIs.
-#[cfg(feature = "graph")]
-pub mod graph;
-
-/// Application tracing helpers.
-pub mod tracing;
-
-/// Shared public types.
-#[cfg(any(feature = "chunking", feature = "extraction", feature = "graph"))]
-pub mod types;
-
-#[cfg(any(feature = "chunking", feature = "extraction"))]
-pub use types::extraction::*;
-
-#[cfg(feature = "graph")]
-pub use types::graph::*;
-
-/// Text embeddings
-#[cfg(feature = "embedding")]
-pub mod embedding;
-
-/// The name of the application.
-/// Used for directory names, trace logs, etc.
-pub const APP_NAME: &str = "akuna";
+/// Graph storage and retrieval APIs.
+#[cfg(feature = "storage")]
+pub mod storage;

@@ -1,38 +1,32 @@
-//! Command-line application entry point.
+//! Command-line interface for knowledge tools.
+//!
+//! Wires together extraction, schema generation, and the local REST API
+//! server on top of the shared `akuna-core` workspace crate.
+//!
+//! Subcommands:
+//! - `extract`: extract metadata and structured content parts from a file
+//! - `schemas`: generate app and OpenAPI JSON schemas
+//! - `serve`: run the local HTTP API server
+//!
+//! # Example
+//!
+//! ```text
+//! akuna --help
+//! akuna extract ./notes.md --metadata --text
+//! akuna serve
+//! ```
 
-mod extraction;
+mod api;
+mod cli;
+mod config;
+mod tracing;
 
-use akuna_core::tracing::{LOG_LEVELS, setup_tracing};
 use anyhow::Result;
-use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-#[derive(Parser)]
-#[command(version, about = "Command-line tools")]
-struct Cli {
-    #[arg(long, value_parser = LOG_LEVELS)]
-    log_level: Option<String>,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Extract structured metadata & content from a file.
-    Extract(extraction::ExtractCommand),
-}
-
 #[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    setup_tracing(cli.log_level.as_deref());
-
-    match cli.command {
-        Command::Extract(command) => command.run().await?,
-    }
-
-    Ok(())
+async fn main() -> anyhow::Result<()> {
+    cli::run().await
 }
 
 pub(crate) fn print_json(value: &impl Serialize) -> Result<()> {

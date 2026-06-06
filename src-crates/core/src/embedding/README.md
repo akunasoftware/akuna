@@ -1,50 +1,87 @@
-# Embedding Namespace
+# Text Embeddings
 
-`akuna_core::embedding` loads a shared text embedding model and embeds text.
-Feature-gated behind `embedding`.
+Text embedding models (MiniLM, BGE, MPNet, BGE-M3) built on [Burn](https://github.com/tracel-ai/burn).
 
-Use `model` to load the default model once and reuse it across calls.
-Use `embed_batch` when embedding multiple texts.
-
-## How To Use It
-
-Use `embedding::model()` for shared application-wide embedding.
-It initializes the default model once, then reuses it through a `OnceCell`.
-Use `TextEmbedding::new` when you need explicit model options or cache location.
-Use `embed_batch` for multiple inputs and pass a batch size when you need to control throughput or memory use.
-
-| API                    | Purpose                                            |
-| ---------------------- | -------------------------------------------------- |
-| `model()`              | Shared default embedding model.                    |
-| `TextEmbedding::new`   | Custom model/options instance.                     |
-| `embed`                | Embed one input string.                            |
-| `embed_batch`          | Embed many input strings.                          |
-| `TextEmbeddingOptions` | Choose model variant and optional cache directory. |
-
-## Custom Model
+## Usage
 
 ```rust
-use std::path::PathBuf;
+use akuna_core::embedding::{TextEmbedding, TextEmbeddingOptions};
 
-use akuna_core::embedding::{EmbeddingModel, TextEmbedding, TextEmbeddingOptions};
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let model = TextEmbedding::new(TextEmbeddingOptions::default()).await?;
 
-let options = TextEmbeddingOptions {
-    model: EmbeddingModel::MiniLmL12,
-    cache_dir: Some(PathBuf::from("./models")),
-};
+    // `embed` is blocking. In a real service, wrap heavy inference in
+    // `tokio::task::spawn_blocking` to avoid stalling async workers.
+    let single = model.embed("Hello world")?;
+    let batch = model.embed_batch(&["Hello world", "Rust embeddings"], None)?;
 
-let model = TextEmbedding::new(options).await?;
+    println!("single: {}, batch: {}", single.len(), batch.len());
+
+    Ok(())
+}
 ```
 
-## Batch Embedding
+## Search
 
-```rust
-use akuna_core::embedding;
+Embed stored content with `embed` or `embed_batch`.
+Embed user queries with `embed_query` or `embed_query_batch`.
+The query methods follow `sentence-transformers` defaults and add no hidden prompts.
 
-let model = embedding::model().await?;
+If a model card recommends a prompt, pass it explicitly via
+`embed_query_with_prompt` or `embed_query_batch_with_prompt`.
 
-let embeddings = model.embed_batch(
-    &["Hello world", "Rust embeddings"],
-    Some(2),
-)?;
+```rust,no_run
+use akuna_core::embedding::TextEmbedding;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let model = TextEmbedding::new(Default::default()).await?;
+    let prompt = "Represent this sentence for searching relevant passages: ";
+
+    // `embed*` calls are blocking; see the Usage section above.
+    let document = model.embed("Burn is a deep learning framework for Rust")?;
+    let query = model.embed_query_with_prompt("Rust machine learning", Some(prompt))?;
+
+    assert_eq!(document.len(), query.len());
+
+    Ok(())
+}
+```
+
+## Models
+
+`EmbeddingModel::MiniLmL12` is the default.
+
+| Variant              | Checkpoint                                  | Dimensions |
+| -------------------- | ------------------------------------------- | ---------- |
+| `MiniLmL6`           | `sentence-transformers/all-MiniLM-L6-v2`    | 384        |
+| `MiniLmL12`          | `sentence-transformers/all-MiniLM-L12-v2`   | 384        |
+| `BgeSmallEnV15`      | `BAAI/bge-small-en-v1.5`                    | 384        |
+| `BgeBaseEnV15`       | `BAAI/bge-base-en-v1.5`                     | 768        |
+| `BgeLargeEnV15`      | `BAAI/bge-large-en-v1.5`                    | 1024       |
+| `AllMpnetBaseV2`     | `sentence-transformers/all-mpnet-base-v2`   | 768        |
+| `BgeM3`              | `BAAI/bge-m3`                               | 1024       |
+
+`BgeM3` exposes dense embeddings only.
+Sparse and multi-vector outputs are separate retrieval concerns
+and are not part of the `Vec<f32>` API.
+
+```rust,no_run
+use akuna_core::embedding::{EmbeddingModel, TextEmbedding, TextEmbeddingOptions};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let model = TextEmbedding::new(TextEmbeddingOptions {
+        model: EmbeddingModel::BgeSmallEnV15,
+        ..Default::default()
+    })
+    .await?;
+
+    // `embed` is blocking; see the Usage section above.
+    let embedding = model.embed("Hello world")?;
+    assert!(!embedding.is_empty());
+
+    Ok(())
+}
 ```

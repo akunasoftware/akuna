@@ -1,13 +1,12 @@
 {
   lib,
   pkgs,
-  buildType ? "release",
 }:
 let
   pname = "akuna";
   cargoPackageName = "akuna";
-  version = "0.2.0";
-  rustVersion = "1.93.1";
+  version = (lib.importTOML ../Cargo.toml).workspace.package.version;
+  rustVersion = "1.96.0";
   rustToolChain = pkgs.rust-bin.stable.${rustVersion}.minimal.override {
     targets = [
       "aarch64-apple-darwin"
@@ -76,7 +75,6 @@ let
   };
 in
 rustPlatform.buildRustPackage {
-  inherit buildType;
   pname = pname;
   version = version;
   src = ../.;
@@ -90,16 +88,16 @@ rustPlatform.buildRustPackage {
   # git-sourced dependencies require explicit hashes
   cargoLock = {
     lockFile = ../Cargo.lock;
-    outputHashes = {
-      "burn-embed-0.1.0" = "sha256-13MhU9n+qqTCWyJSddTo+UPYSz6r+Sv5u/4trF9+2gQ";
-      "burn-magika-0.1.0" = "sha256-yirVZbeX6Da7OOs1ztBo+e5NR9y8W3mthKA/Tr2G83A=";
-    };
   };
 
   # Only build the main crate, not all workspace members
   cargoBuildFlags = [
     "--package=${cargoPackageName}"
   ];
+
+  postInstall = lib.optionalString pkgs.stdenv.isLinux ''
+    strip --strip-unneeded "$out/bin/${pname}"
+  '';
 
   meta = {
     description = "Akuna Knowledge Tools";

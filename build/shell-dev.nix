@@ -36,26 +36,32 @@ let
     '')
 
     # Shorthand alias for main package via cargo (use any time, but slower than debug out)
-    (pkgs.writeShellScriptBin "akd" "cargo run -p ${pname} -- --log-level \"debug\" \"$@\"")
+    (pkgs.writeShellScriptBin "akd" "cargo run -p ${pname} --all-features -- --log-level \"debug\" \"$@\"")
 
     # Shorthand alias for main package via debug out (must have already built)
     (pkgs.writeShellScriptBin "ak" "$PROJECT_ROOT/target/debug/${pname} \"$@\"")
+
+    # Shorthand alias to build and open rustdoc for a specific crate in browser.
+    # Usage: akdoc <crate-name>. Clears target/doc first; mirrors docs.rs:
+    # all features enabled, deps excluded.
+    (pkgs.writeShellScriptBin "akdoc" ''
+      if [ $# -eq 0 ]; then
+        echo "usage: akdoc <crate-name>" >&2
+        exit 1
+      fi
+      rm -rf "$PROJECT_ROOT/target/doc"
+      cargo doc --no-deps --all-features --open -p "$1"
+    '')
 
     # Install main package to nix profile
     (pkgs.writeShellScriptBin "nix-install" ''
       set -euo pipefail
 
       target_system="''${NIX_TARGET_SYSTEM:-$(nix eval --impure --raw --expr 'builtins.currentSystem')}"
-      build_type="''${1:-release}"
-      case "$build_type" in
-        release) package_attr="default" ;;
-        debug) package_attr="debug" ;;
-        *) echo "Usage: nix-install [release|debug]" >&2; exit 1 ;;
-      esac
 
       cd "$PROJECT_ROOT"
       nix profile remove ${pname} || true
-      nix profile add ".#packages.$target_system.$package_attr"
+      nix profile add ".#packages.$target_system.default"
     '')
 
     # Show Nix closure size for main package output
@@ -77,18 +83,11 @@ let
       set -euo pipefail
 
       target_system="''${NIX_TARGET_SYSTEM:-$(nix eval --impure --raw --expr 'builtins.currentSystem')}"
-      oci_system="''${NIX_OCI_SYSTEM:-x86_64-linux}"
-      build_type="''${1:-release}"
-      case "$build_type" in
-        release) package_attr="oci-$oci_system" ;;
-        debug) package_attr="oci-$oci_system-debug" ;;
-        *) echo "Usage: nix-oci-build [release|debug]" >&2; exit 1 ;;
-      esac
 
-      image_out="target/oci/image-$oci_system-$build_type.tar"
+      image_out="target/oci/image-$target_system.tar"
       rm -f "$image_out"
 
-      nix build ".#packages.$target_system.$package_attr" -o "$image_out"
+      nix build ".#packages.$target_system.oci" -o "$image_out"
       docker load --input "$image_out"
     '')
   ];
@@ -101,11 +100,15 @@ pkgs.mkShell {
     [
       # core libs required by dev tools
       gcc
+      zstd
 
       # general utils
       curl
       jq
       yq
+
+      # services cli's
+      python3Packages.huggingface-hub
 
       # language & framework tools
       rustToolChain
@@ -132,12 +135,8 @@ pkgs.mkShell {
   shellHook = ''
     export PROJECT_ROOT=$(pwd);
 
-    # if present, load sops-encrypted secrets into session env
-    if [ -f "$PROJECT_ROOT/.env.enc" ]; then
-      set -a
-      source <(sops -d "$PROJECT_ROOT/.env.enc")
-      set +a
-    fi
+    # set env using workspace env script (so it can still be used by non-nix users)
+    . "$PROJECT_ROOT/build/scripts/ws-env.sh"
   '';
 
 }

@@ -1,8 +1,16 @@
-<h1>
-  <img src="../../assets/icon-gradient.svg" alt="" width="36" align="left">
-  Native Application
-</h1>
+# akuna
 
-Command-line application crate for workflows implemented by shared workspace crates.
+Binary crate exposing the `akuna` command-line interface for knowledge work.
+Wires together file extraction, schema generation, and a local REST API server
+on top of the shared `akuna-core` workspace crate.
+
+## Usage
+
+```text
+akuna --help
+akuna extract ./notes.md --metadata --content
+akuna schemas generate
+akuna serve
+```
 
 See the [workspace README](../../README.md) for project overview.

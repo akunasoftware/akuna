@@ -27,7 +27,7 @@ All of the below features, while preserving the following key values:
 
 - Sophisticated Tooling
   - Document extraction
-  - Content chunking
+  - Structured content parts
   - Entity recognition & reification (WIP)
   - Hardware accelerated vector embedding
   - Graph storage & traversal (WIP)
@@ -42,19 +42,29 @@ Command line application, currently implements minimal features. Much more comin
 ## [Core Library](./src-crates/core/)
 
 See [`src-crates/core/Cargo.toml`](./src-crates/core/Cargo.toml) for available feature sets.
-Use `full` to enable all feature-gated APIs
+Use `full` to enable all feature-gated APIs.
 
-| Namespace                                         | Cargo Features                     | Description                                          |
-| ------------------------------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| [`Extraction`](./src-crates/core/src/extraction/) | `extraction`                       | Extracts file metadata, text content, and chunks.    |
-| [`Chunking`](./src-crates/core/src/chunking/)     | `chunking`, `chunking-tree-sitter` | Splits text using configured delimiters and size.    |
-| [`Embedding`](./src-crates/core/src/embedding/)   | `embedding`                        | Loads text embedding models and embeds text batches. |
-| [`Graph`](./src-crates/core/src/graph/)           | `graph`                            | Provides graph primitives, types, and storage APIs.  |
-| [`Types`](./src-crates/core/src/types/)           |                                    | Shared result, error, and configuration types.       |
+`akuna-core` is a single crate with feature-gated modules.
 
-## Additional Crates
+| Module          | Cargo Feature | Description                                          |
+| --------------- | ------------- | ---------------------------------------------------- |
+| `extraction`    | `extraction`  | Extracts file metadata, text content, and parts.     |
+| `embedding`     | `embedding`   | Loads text embedding models and embeds text batches. |
+| `layout`        | `layout`      | Detects document layout blocks in images.            |
+| `ocr`           | `ocr`         | Extracts text blocks from images.                    |
+| `storage`       | `storage`     | Provides graph primitives, types, and storage APIs.  |
+| `reranking`     | `reranking`   | ML reranking of retrieved candidates.                |
+| `detection`     | `detection`   | File type inference (Rust native Magika).            |
 
-| Crate                                                         | Purpose                                                                                                             |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| [`burn-magika`](https://github.com/akunasoftware/burn-magika) | Rust native [Magika](https://github.com/google/magika) file type inference built on [Rust Burn](https://burn.dev/). |
-| [`burn-embed`](https://github.com/akunasoftware/burn-embed)   | Rust native text embedding models built on [Rust Burn](https://burn.dev/).                                          |
+Module source lives under [`./src-crates/core/src/`](./src-crates/core/src/).
+
+## Workspace Crates
+
+| Crate          | Path                    | Purpose                                              |
+| -------------- | ----------------------- | ---------------------------------------------------- |
+| `akuna`        | `./src-crates/app/`     | Command line application binary.                     |
+| `akuna-core`   | `./src-crates/core/`    | Knowledge tooling library with feature-gated modules.|
+
+## Documentation
+
+- `akdoc <crate>` — alias to `cargo doc --no-deps --all-features --open -p <crate>`, mirroring docs.rs output for the named crate.

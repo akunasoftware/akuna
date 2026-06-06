@@ -1,11 +1,13 @@
 [package]
 name = "akuna-core"
+description = "Knowledge tooling library for extraction, embedding, reranking, and graph storage."
 authors.workspace = true
 repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+readme = "README.md"
 
 [lib]
 bench = false
@@ -16,91 +18,58 @@ workspace = true
 
 [features]
 default = []
-testing = []
 full = [
-  "chunking",
-  "chunking-tree-sitter", 
-  "embedding", 
-  "extraction", 
-  "graph"
+  "detection",
+  "embedding",
+  "extraction",
+  "layout",
+  "reranking",
+  "storage",
+  "ocr"
 ]
 
-extraction = [
-  "chunking", 
-  "dep:burn-wgpu", 
-  "dep:burn-magika", 
-  "dep:pdf_oxide", 
-  "dep:office_oxide",
-  "dep:omniparse",
-  "dep:rbook"
-]
-embedding = ["dep:burn-wgpu", "dep:burn-embed"]
-graph = ["dep:akuna-core-macros", "dep:grafeo"]
+# Module features
+detection = ["ml", "dep:burn-wgpu", "dep:safetensors"]
+embedding = ["ml", "dep:burn-wgpu", "dep:tokenizers"]
+extraction = ["detection", "dep:tokio", "dep:omniparse", "dep:pdf_oxide", "dep:office_oxide", "dep:rbook", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-c", "dep:tree-sitter-c-sharp", "dep:tree-sitter-containerfile", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-dart", "dep:tree-sitter-go", "dep:tree-sitter-graphql", "dep:tree-sitter-groovy", "dep:tree-sitter-hcl", "dep:tree-sitter-html", "dep:tree-sitter-java", "dep:tree-sitter-javascript", "dep:tree-sitter-json", "dep:tree-sitter-lua", "dep:tree-sitter-md", "dep:tree-sitter-php", "dep:tree-sitter-python", "dep:tree-sitter-ruby", "dep:tree-sitter-rust", "dep:tree-sitter-scala", "dep:tree-sitter-scss", "dep:tree-sitter-sequel", "dep:tree-sitter-svelte-next", "dep:tree-sitter-swift", "dep:tree-sitter-typescript", "dep:tree-sitter-vue-updated", "dep:tree-sitter-yaml"]
+layout = ["ml", "dep:burn-wgpu", "dep:image", "dep:safetensors"]
+ml = ["dep:burn", "dep:burn-store", "dep:hf-hub"]
+ocr = ["layout", "dep:tokenizers"]
+reranking = ["ml", "dep:burn-wgpu", "dep:tokenizers"]
+storage = ["dep:grafeo"]
 
-chunking = ["dep:memchunk"]
-chunking-tree-sitter = [
-    "chunking",
-    "dep:tree-sitter",
-    "dep:tree-sitter-bash",
-    "dep:tree-sitter-c",
-    "dep:tree-sitter-c-sharp",
-    "dep:tree-sitter-containerfile",
-    "dep:tree-sitter-cpp",
-    "dep:tree-sitter-css",
-    "dep:tree-sitter-dart",
-    "dep:tree-sitter-go",
-    "dep:tree-sitter-graphql",
-    "dep:tree-sitter-groovy",
-    "dep:tree-sitter-hcl",
-    "dep:tree-sitter-html",
-    "dep:tree-sitter-java",
-    "dep:tree-sitter-javascript",
-    "dep:tree-sitter-json",
-    "dep:tree-sitter-lua",
-    "dep:tree-sitter-md",
-    "dep:tree-sitter-php",
-    "dep:tree-sitter-python",
-    "dep:tree-sitter-ruby",
-    "dep:tree-sitter-rust",
-    "dep:tree-sitter-scala",
-    "dep:tree-sitter-scss",
-    "dep:tree-sitter-sequel",
-    "dep:tree-sitter-svelte-next",
-    "dep:tree-sitter-swift",
-    "dep:tree-sitter-typescript",
-    "dep:tree-sitter-vue-updated",
-    "dep:tree-sitter-yaml",
-]
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
-# core deps from workspace
-thiserror = { workspace = true }
+# Core primitives (always compiled)
 anyhow = { workspace = true }
-tokio = { workspace = true }
-dirs = { workspace = true }
-walkdir = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-akuna-core-macros = { path = "../core-macros", optional = true }
+blake3 = "1.8.5"
+utoipa = { workspace = true }
 
-# extraction features
-pdf_oxide = { version = "0.3.30", optional = true, default-features = false }
-office_oxide = { version = "0.1.2", optional = true, default-features = false }
-omniparse = { version = "0.4.0", optional = true, default-features = false }
-rbook = { version = "0.7.7", optional = true, default-features = false }
+# ML stack (detection, embedding, layout, reranking)
+burn = { workspace = true, optional = true }
+burn-wgpu = { workspace = true, optional = true }
+burn-store = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+safetensors = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
 
-# ml features: (embedding, magika etc.)
-burn-wgpu = { version = "0.21.0-pre.3", optional = true, default-features = false, features = ["std", "webgpu"] }
-burn-magika = { git = "https://github.com/akunasoftware/burn-magika", optional = true }
-burn-embed = { git = "https://github.com/akunasoftware/burn-embed", optional = true }
+# Storage (graph backend)
+grafeo = { version = "0.5.42", default-features = false, features = ["embedded", "hybrid-search", "rdf", "text-index", "vector-index"], optional = true }
 
-# graph: (storage, search etc.)
-grafeo = { version = "0.5.42", optional = true, default-features = false, features = ["embedded", "hybrid-search", "rdf", "text-index", "vector-index"] }
+# Extraction (document parsing)
+tokio = { workspace = true, optional = true }
+omniparse = { version = "0.4.0", default-features = false, optional = true }
+pdf_oxide = { version = "0.3.30", default-features = false, optional = true }
+office_oxide = { version = "0.1.2", default-features = false, optional = true }
+rbook = { version = "0.7.7", default-features = false, optional = true }
 
-# chunking features
-memchunk = { version = "0.4.0", optional = true }
+# Extraction — tree-sitter grammars (internal implementation)
 tree-sitter = { version = "0.26.9", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 tree-sitter-c = { version = "0.24.2", optional = true }
@@ -132,17 +101,16 @@ tree-sitter-typescript = { version = "0.23.2", optional = true }
 tree-sitter-vue-updated = { version = "0.1.0", optional = true }
 tree-sitter-yaml = { version = "0.7.2", optional = true }
 
+# Build-time conversion of the committed magika onnx weights (detection feature)
+# into safetensors that are embedded in the binary. Nothing is fetched.
+[build-dependencies]
+onnx-ir = { workspace = true }
+protobuf = { workspace = true }
+safetensors = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.8.2", features = ["async_tokio"] }
-tempfile = "3.27.0"
-
-[[bench]]
-name = "extraction"
-harness = false
-required-features = ["extraction", "testing"]
-
-[[bench]]
-name = "embedding"
-harness = false
-required-features = ["extraction", "embedding", "testing"]
+magika = "1.1.0"
+# ort is a transitive dep of magika; declared here to enable the
+# `download-binaries` feature so the ONNX Runtime library is fetched at build
+# time (otherwise magika fails to link).
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["download-binaries", "tls-rustls"] }

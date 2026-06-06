@@ -1,0 +1,4 @@
+# The upstream `model.onnx` is committed (vendored from magika upstream).
+# `build.rs` converts it to `model.safetensors` in OUT_DIR at build time, so the
+# derived safetensors is never committed.
+model.safetensors
