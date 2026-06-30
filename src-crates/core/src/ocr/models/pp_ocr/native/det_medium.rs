@@ -1,6 +1,4 @@
-//! Native PP-OCRv6 **medium** text detector. The backbone (LCNetV4) and DB head
-//! match the small/tiny detector, but the neck is an LKPAN with large-kernel
-//! projections and per-level "intraclass" multi-ratio strip-conv blocks (no SE).
+//! PP-OCRv6 text detector for the medium tier.
 
 use anyhow::Result;
 use burn::nn::PaddingConfig2d;
@@ -32,7 +30,7 @@ fn upsample_nearest<B: Backend<FloatElem = f32>>(
     )
 }
 
-/// A K×K symmetric + K×1 vertical + 1×K horizontal triple summed together.
+/// Strip-convolution stage of the medium detector neck.
 #[derive(Debug)]
 struct StripStage<B: Backend> {
     symmetric: ConvLayer<B>,
@@ -93,8 +91,7 @@ impl<B: Backend<FloatElem = f32>> StripStage<B> {
     }
 }
 
-/// Per-level intraclass block: reduce → long→mid→short strip cascade →
-/// conv_final(+BN+ReLU) → residual with the 64-ch block input.
+/// Per-level intraclass block of the medium detector neck.
 #[derive(Debug)]
 struct IntraclassBlock<B: Backend> {
     reduce: ConvLayer<B>,

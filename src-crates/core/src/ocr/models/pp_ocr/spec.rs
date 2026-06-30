@@ -1,7 +1,6 @@
 use crate::ocr::{OcrDetector, OcrRecognizer};
 
-/// HuggingFace repo holding the official PyTorch-semantic safetensors weights
-/// for the native detector.
+/// Returns the weights repo for the given detector.
 pub(crate) fn det_safetensors_repo(detector: OcrDetector) -> &'static str {
     match detector {
         OcrDetector::PpOcrV6TinyDet => {
@@ -16,8 +15,7 @@ pub(crate) fn det_safetensors_repo(detector: OcrDetector) -> &'static str {
     }
 }
 
-/// HuggingFace repo holding the official safetensors weights for the native
-/// recognizer.
+/// Returns the weights repo for the given recognizer.
 pub(crate) fn rec_safetensors_repo(recognizer: OcrRecognizer) -> &'static str {
     match recognizer {
         OcrRecognizer::PpOcrV6TinyRec => {

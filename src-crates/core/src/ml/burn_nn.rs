@@ -1,9 +1,5 @@
-//! Reusable native-burn building blocks for hand-written CNN / transformer
-//! models loaded directly from HuggingFace `safetensors`.
-//!
-//! Shared by the native PP-DocLayout and PP-OCR implementations so each model
-//! is a plain Rust module (no ONNX-generated code, no `.bpk`). Everything here
-//! is backend-generic and loads weights from a [`SafeTensors`] archive.
+//! Reusable native-burn building blocks for CNN and transformer models loaded
+//! from HuggingFace `safetensors`.
 #![allow(dead_code, clippy::too_many_arguments)]
 
 use anyhow::{Context, Result, bail};
@@ -92,8 +88,7 @@ pub(crate) fn read_conv1d_as_conv2d_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Reads a transposed-conv weight `[in, out/groups, kh, kw]` (burn layout —
-/// matches the PaddlePaddle export, no transpose required).
+/// Reads a transposed-conv weight `[in, out/groups, kh, kw]`.
 pub(crate) fn read_conv_transpose_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -139,15 +134,15 @@ pub(crate) enum Activation {
     Identity,
     Relu,
     Silu,
-    /// Exact erf-based GELU.
+    /// GELU.
     Gelu,
     Sigmoid,
-    /// `clamp(alpha * x + beta, 0, 1)`.
+    /// Hard sigmoid.
     HardSigmoid {
         alpha: f64,
         beta: f64,
     },
-    /// `x * clamp(x/6 + 0.5, 0, 1)`.
+    /// Hard swish.
     HardSwish,
 }
 
@@ -282,9 +277,7 @@ impl<B: Backend<FloatElem = f32>> BatchNorm2dLayer<B> {
 // ---- Conv2d (+ optional BN) + activation -----------------------------------
 
 /// A 2-D convolution with an optional folded BatchNorm and a pointwise
-/// activation. Two storage forms are supported:
-/// - `conv_bn`: `{conv}.weight` (no conv bias) + `{norm}.{weight,bias,running_mean,running_var}`.
-/// - `conv_bias`: `{conv}.weight` + `{conv}.bias` (no norm).
+/// activation.
 #[derive(Debug)]
 pub(crate) struct ConvLayer<B: Backend> {
     conv: Conv2d<B>,
@@ -636,9 +629,7 @@ impl<B: Backend<FloatElem = f32>> LayerNormLayer<B> {
     }
 }
 
-/// Scaled dot-product attention over `[B, heads, seq, head_dim]` tensors with a
-/// fixed `scale`. Softmax over the key axis. Uses [`safe_matmul`] for the large
-/// contraction dims.
+/// Scaled dot-product attention over `[B, heads, seq, head_dim]` tensors.
 pub(crate) fn scaled_dot_product_attention<B: Backend<FloatElem = f32>>(
     q: Tensor<B, 4>,
     k: Tensor<B, 4>,

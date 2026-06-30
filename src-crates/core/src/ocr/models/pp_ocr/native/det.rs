@@ -1,6 +1,4 @@
-//! Native PP-OCRv6 text-detection model (LCNetV4 backbone + RepLKFPN neck +
-//! DB head), loaded directly from HuggingFace safetensors. Produces the DB
-//! probability map `[1, 1, H, W]` consumed by `postprocess_detector`.
+//! PP-OCRv6 text-detection model for the small and tiny tiers.
 
 use anyhow::Result;
 use burn::nn::PaddingConfig2d;
@@ -34,7 +32,7 @@ fn upsample_nearest<B: Backend<FloatElem = f32>>(
     )
 }
 
-/// Neck lateral: 1x1 in-conv then SE-residual `y + y * hard-sigmoid(gate)`.
+/// Neck lateral projection.
 #[derive(Debug)]
 struct InsertConv<B: Backend> {
     in_conv: ConvLayer<B>,
@@ -80,7 +78,7 @@ impl<B: Backend<FloatElem = f32>> InsertConv<B> {
     }
 }
 
-/// Neck RepLK input-conv: 7x7 depthwise + 1x1 pointwise then SE-residual.
+/// Neck input convolution.
 #[derive(Debug)]
 struct InputConv<B: Backend> {
     depthwise: ConvLayer<B>,
@@ -155,21 +153,16 @@ pub(crate) struct PpOcrDetector<B: Backend> {
     conv_final: ConvTransposeLayer<B>,
 }
 
-/// Tier-specific channel widths for the small/tiny RepLKFPN detector.
+/// Tier-specific channel widths for the small/tiny detector.
 pub(crate) struct DetConfig {
-    /// `stem1` output width; the stem produces `2 * stem_base` channels.
     stem_base: usize,
     block_specs: fn() -> Vec<BlockSpec>,
-    /// Backbone stage output channels `[C2, C3, C4, C5]`.
     stage_channels: [usize; 4],
-    /// Common neck channel width (lateral / input-conv outputs share this).
     neck_width: usize,
     insert_se_reduced: usize,
-    /// `input_conv` pointwise output (one quarter of the aggregate).
     input_proj: usize,
     input_se_reduced: usize,
     input_dw_kernel: usize,
-    /// DB head intermediate width (`conv_down` out / `conv_up` / `conv_final` in).
     head_width: usize,
 }
 
@@ -347,8 +340,7 @@ impl<B: Backend<FloatElem = f32>> PpOcrDetector<B> {
     }
 }
 
-/// Returns the small/tiny RepLKFPN detector config. Medium uses a different
-/// neck architecture (LKPAN — see `det_medium`) and is handled separately.
+/// Returns the detector config for the small or tiny tier.
 pub(crate) fn det_config(detector: crate::ocr::OcrDetector) -> DetConfig {
     use crate::ocr::OcrDetector;
     match detector {

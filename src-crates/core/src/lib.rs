@@ -1,22 +1,9 @@
 //! Akuna core knowledge tooling library.
 //!
-//! Provides optional feature-gated modules for file-type detection,
-//! embeddings, extraction, layout, OCR, reranking, and graph storage.
-//! Consumers enable only the features they need.
-//!
-//! # Modules
-//!
-//! - [`detection`] — file-type detection (feature `detection`)
-//! - [`embedding`] — text embeddings (feature `embedding`)
-//! - [`extraction`] — file extraction (feature `extraction`)
-//! - [`layout`] — document layout detection (feature `layout`)
-//! - [`ocr`] — image OCR engines (feature `ocr`)
-//! - [`reranking`] — text reranking (feature `reranking`)
-//! - [`storage`] — graph storage and retrieval (feature `storage`)
+//! Feature-gated modules for file-type detection, embeddings, extraction,
+//! layout, OCR, reranking, and graph storage. Enable only the features you need.
 //!
 //! # Example
-//!
-//! Enable the `extraction` feature and call a module function:
 //!
 //! ```ignore
 //! use akuna_core::extraction::{document, ExtractionConfig};

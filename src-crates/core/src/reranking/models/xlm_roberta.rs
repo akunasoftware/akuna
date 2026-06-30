@@ -13,7 +13,7 @@ use burn_store::{
 use serde::Deserialize;
 use tokenizers::{EncodeInput, Tokenizer, TruncationParams};
 
-use crate::ml::transformer::{BertEncoder, EncoderConfig};
+use crate::ml::transformer::{BertEncoder, EncoderConfig, bert_encoder_remap};
 use crate::ml::{cls_pooling, download_hf_model_files};
 
 type TokenizedPairs<B> = (Tensor<B, 2, Int>, Tensor<B, 2>, Tensor<B, 2, Int>);
@@ -74,14 +74,7 @@ pub(crate) struct XlmRobertaRerankerModel<B: Backend> {
 
 impl XlmRobertaConfig {
     fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!("failed to read reranker config at {}", path.display())
-        })?;
-
-        serde_json::from_str(&content).with_context(|| {
-            format!("failed to parse reranker config at {}", path.display())
-        })
+        crate::ml::load_json_config(path.as_ref(), "reranker config")
     }
 
     fn init<B: Backend>(
@@ -204,11 +197,7 @@ impl<B: Backend> SequenceClassificationHead<B> {
 }
 
 impl<B: Backend> XlmRobertaRerankerModel<B> {
-    /// Tokenizes `pairs` and runs a forward pass returning a 1-D logits tensor with one score per pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if tokenization fails.
+    /// Scores query/document `pairs`, returning one relevance logit per pair.
     pub(crate) fn score(
         &self,
         pairs: &[(&str, &str)],
@@ -223,11 +212,7 @@ impl<B: Backend> XlmRobertaRerankerModel<B> {
     }
 }
 
-/// Downloads, parses, and loads an XLM-RoBERTa reranker model onto `device`.
-///
-/// # Errors
-///
-/// Returns an error if the model download, config parse, weight load, or tokenizer setup fails.
+/// Loads a pretrained XLM-RoBERTa reranker model onto `device`.
 pub(crate) async fn load_pretrained_xlm_roberta_reranker<B>(
     device: &B::Device,
     repo_id: &str,
@@ -269,22 +254,12 @@ fn load_pretrained_weights<B: Backend>(
     model: &mut XlmRobertaForSequenceClassification<B>,
     checkpoint_path: impl AsRef<Path>,
 ) -> Result<()> {
-    let key_mappings = vec![
-        ("^roberta\\.(.+)", "bert.$1"),
-        ("encoder\\.layer\\.([0-9]+)", "encoder.layers.$1"),
-        ("attention\\.self\\.query", "mha.query"),
-        ("attention\\.self\\.key", "mha.key"),
-        ("attention\\.self\\.value", "mha.value"),
-        ("attention\\.output\\.dense", "mha.output"),
-        ("attention\\.output\\.LayerNorm", "norm_1"),
-        ("intermediate\\.dense", "pwff.linear_inner"),
-        ("(layers\\.[0-9]+)\\.output\\.dense", "$1.pwff.linear_outer"),
-        ("(layers\\.[0-9]+)\\.output\\.LayerNorm", "$1.norm_2"),
-        (
-            "bert\\.embeddings\\.LayerNorm",
-            "bert.embeddings.layer_norm",
-        ),
-    ];
+    let mut key_mappings = vec![("^roberta\\.(.+)", "bert.$1")];
+    key_mappings.extend(bert_encoder_remap());
+    key_mappings.push((
+        "bert\\.embeddings\\.LayerNorm",
+        "bert.embeddings.layer_norm",
+    ));
     let remapper = KeyRemapper::from_patterns(key_mappings)
         .context("failed to create reranker weight remapper")?;
     let mut store = SafetensorsStore::from_file(checkpoint_path.as_ref())

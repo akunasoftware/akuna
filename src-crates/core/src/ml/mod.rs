@@ -6,32 +6,25 @@ use anyhow::{Context, Result, bail};
 use burn::tensor::{Tensor, backend::Backend};
 use hf_hub::api::tokio::ApiBuilder;
 
-/// Reusable native-burn layers loaded from safetensors (needs `safetensors`,
-/// pulled in by the `layout`/`ocr` features).
+/// Runtime backend and device selection, shared by every ML module.
+pub(crate) mod backend;
+
+/// Reusable native-burn layers loaded from safetensors.
 #[cfg(feature = "layout")]
 pub(crate) mod burn_nn;
 
-/// cv2-compatible image preprocessing (needs `image`, pulled in by
-/// `layout`/`ocr`).
+/// cv2-compatible image preprocessing.
 #[cfg(any(feature = "layout", feature = "ocr"))]
 pub(crate) mod imageproc;
 
-/// A BERT-style transformer encoder that mirrors burn's `TransformerEncoder`
-/// but routes attention through [`safe_matmul`] (used by embedding/reranking).
+/// A BERT-style transformer encoder used by embedding and reranking.
 #[cfg(any(feature = "embedding", feature = "reranking"))]
 pub(crate) mod transformer;
 
-/// Contraction-dim chunk size for [`safe_matmul`]. burn-wgpu 0.21's matmul
-/// returns wrong results when the shared dimension `K >= 512`, so we split `K`
-/// into chunks at or below this size and sum the partial products.
+/// Contraction-dim chunk size for [`safe_matmul`].
 pub(crate) const SAFE_MATMUL_K: usize = 256;
 
-/// `lhs @ rhs` that works around the burn-wgpu 0.21 large-`K` matmul bug.
-///
-/// Generic over rank: `K` is the last axis of `lhs` and second-to-last of
-/// `rhs`. For `K > SAFE_MATMUL_K` the contraction is split into chunks and the
-/// partial products are summed (mathematically exact). Once burn ships a stable
-/// release with the kernel fixed, this and all its call sites can be deleted.
+/// Computes `lhs @ rhs` for tensors of any rank.
 #[cfg(any(feature = "layout", feature = "embedding", feature = "reranking"))]
 pub(crate) fn safe_matmul<B: Backend, const D: usize>(
     lhs: Tensor<B, D>,
@@ -68,10 +61,6 @@ pub(crate) struct HfModelFiles {
 }
 
 /// Downloads common Hugging Face model files into the local cache.
-///
-/// # Errors
-///
-/// Returns an error if the API client cannot initialize or required files cannot download.
 pub(crate) async fn download_hf_model_files(
     repo_id: &str,
     weights_file: &str,
@@ -109,11 +98,21 @@ pub(crate) async fn download_hf_model_files(
     })
 }
 
-/// Resolves an optional batch size with shared validation.
-///
-/// # Errors
-///
-/// Returns an error when the resolved batch size is zero.
+/// Reads and deserializes a JSON config file, tagging errors with `what`.
+#[cfg(any(feature = "embedding", feature = "reranking"))]
+pub(crate) fn load_json_config<T: serde::de::DeserializeOwned>(
+    path: &std::path::Path,
+    what: &str,
+) -> Result<T> {
+    let content = std::fs::read_to_string(path).with_context(|| {
+        format!("failed to read {what} at {}", path.display())
+    })?;
+    serde_json::from_str(&content).with_context(|| {
+        format!("failed to parse {what} at {}", path.display())
+    })
+}
+
+/// Resolves an optional batch size, applying a default and validation.
 pub(crate) fn resolve_batch_size(
     item_count: usize,
     requested: Option<usize>,
@@ -128,10 +127,6 @@ pub(crate) fn resolve_batch_size(
 }
 
 /// Converts a rank-1 tensor to `Vec<f32>`.
-///
-/// # Errors
-///
-/// Returns an error when tensor data cannot be read as `f32`.
 pub(crate) fn tensor1_to_vec_f32<B: Backend>(
     tensor: Tensor<B, 1>,
     context: &str,
@@ -144,10 +139,6 @@ pub(crate) fn tensor1_to_vec_f32<B: Backend>(
 }
 
 /// Converts a rank-2 tensor to `Vec<Vec<f32>>` rows.
-///
-/// # Errors
-///
-/// Returns an error when tensor data cannot be read as `f32`.
 pub(crate) fn tensor2_to_rows_f32<B: Backend>(
     tensor: Tensor<B, 2>,
     context: &str,

@@ -16,7 +16,7 @@ use burn_store::{
 use serde::Deserialize;
 use tokenizers::{Tokenizer, TruncationParams};
 
-use crate::ml::transformer::{BertEncoder, EncoderConfig};
+use crate::ml::transformer::{BertEncoder, EncoderConfig, bert_encoder_remap};
 use crate::ml::{HfModelFiles, cls_pooling, download_hf_model_files};
 
 /// How a sequence's token hidden states collapse to one embedding vector.
@@ -48,25 +48,11 @@ pub(crate) struct SentenceBertConfig {
 
 impl SentenceBertConfig {
     /// Reads a `sentence_bert_config.json` file from disk.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read or parsed.
     pub(crate) fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!(
-                "failed to read sentence-transformers config at {}",
-                path.display()
-            )
-        })?;
-
-        serde_json::from_str(&content).with_context(|| {
-            format!(
-                "failed to parse sentence-transformers config at {}",
-                path.display()
-            )
-        })
+        crate::ml::load_json_config(
+            path.as_ref(),
+            "sentence-transformers config",
+        )
     }
 
     /// Configured maximum sequence length, if set.
@@ -105,19 +91,8 @@ pub(crate) struct BertEmbeddingModel<B: Backend> {
 
 impl BertConfig {
     /// Reads a BERT `config.json` file from disk.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read or parsed.
     pub fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!("failed to read embedding config at {}", path.display())
-        })?;
-
-        serde_json::from_str(&content).with_context(|| {
-            format!("failed to parse embedding config at {}", path.display())
-        })
+        crate::ml::load_json_config(path.as_ref(), "embedding config")
     }
 
     /// Initializes a BERT model with this config on `device`.
@@ -219,10 +194,6 @@ where
     B: Backend,
 {
     /// Runs the model over a batch and returns L2-normalized embeddings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if tokenization or model inference fails.
     pub(crate) fn encode(
         &self,
         sentences: &[&str],
@@ -269,10 +240,6 @@ pub(crate) fn prompt_sentences<'a>(
 }
 
 /// Loads a pretrained BERT-family embedding model from Hugging Face.
-///
-/// # Errors
-///
-/// Returns an error if download, config parse, tokenizer load, or weight remap fails.
 pub(crate) async fn load_pretrained_bert_embedding<B>(
     device: &B::Device,
     repo_id: &str,
@@ -315,10 +282,6 @@ where
 }
 
 /// Downloads config, weights, and tokenizer for a Hugging Face model.
-///
-/// # Errors
-///
-/// Returns an error if the Hugging Face API or any file download fails.
 pub(crate) async fn download_hf_model(
     repo_id: &str,
     cache_dir: Option<PathBuf>,
@@ -328,10 +291,6 @@ pub(crate) async fn download_hf_model(
 }
 
 /// Downloads config, weights, and tokenizer using a custom weights file name.
-///
-/// # Errors
-///
-/// Returns an error if the Hugging Face API or any file download fails.
 pub(crate) async fn download_hf_model_with_weights(
     repo_id: &str,
     weights_file: &str,
@@ -342,10 +301,6 @@ pub(crate) async fn download_hf_model_with_weights(
 }
 
 /// Reads `max_seq_length` from an optional `sentence_bert_config.json`.
-///
-/// # Errors
-///
-/// Returns an error if the config exists but cannot be read or parsed.
 pub(crate) fn sentence_transformers_max_length(
     path: Option<&Path>,
 ) -> Result<Option<usize>> {
@@ -358,19 +313,9 @@ fn load_pretrained_weights<B: Backend>(
     model: &mut BertModel<B>,
     checkpoint_path: impl AsRef<Path>,
 ) -> Result<()> {
-    let key_mappings = vec![
-        ("^bert\\.(.+)", "$1"),
-        ("encoder\\.layer\\.([0-9]+)", "encoder.layers.$1"),
-        ("attention\\.self\\.query", "mha.query"),
-        ("attention\\.self\\.key", "mha.key"),
-        ("attention\\.self\\.value", "mha.value"),
-        ("attention\\.output\\.dense", "mha.output"),
-        ("attention\\.output\\.LayerNorm", "norm_1"),
-        ("intermediate\\.dense", "pwff.linear_inner"),
-        ("(layers\\.[0-9]+)\\.output\\.dense", "$1.pwff.linear_outer"),
-        ("(layers\\.[0-9]+)\\.output\\.LayerNorm", "$1.norm_2"),
-        ("embeddings\\.LayerNorm", "embeddings.layer_norm"),
-    ];
+    let mut key_mappings = vec![("^bert\\.(.+)", "$1")];
+    key_mappings.extend(bert_encoder_remap());
+    key_mappings.push(("embeddings\\.LayerNorm", "embeddings.layer_norm"));
 
     let remapper = KeyRemapper::from_patterns(key_mappings)
         .context("failed to create embedding weight remapper")?;
@@ -389,10 +334,6 @@ fn load_pretrained_weights<B: Backend>(
 }
 
 /// Tokenizes a batch and returns `(input_ids, attention_mask)` tensors.
-///
-/// # Errors
-///
-/// Returns an error if the tokenizer fails to encode the batch.
 pub(crate) fn tokenize_batch<B: Backend>(
     tokenizer: &Tokenizer,
     sentences: &[&str],

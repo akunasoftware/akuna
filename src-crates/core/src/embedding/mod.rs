@@ -1,18 +1,8 @@
-//! Dense text embeddings built with Burn.
+//! Dense text embeddings.
 //!
-//! Generate `Vec<f32>` embeddings for text or batches of text. Inference is
-//! blocking; wrap it in `tokio::task::spawn_blocking` when calling from async
-//! contexts.
-//!
-//! # Models
-//!
-//! Select a checkpoint via [`EmbeddingModel`][crate::embedding::EmbeddingModel]
-//! (defaults to `MiniLmL12`):
-//!
-//! - `MiniLmL6` / `MiniLmL12` — `sentence-transformers/all-MiniLM-L6-v2` / `all-MiniLM-L12-v2`
-//! - `BgeSmallEnV15` / `BgeBaseEnV15` / `BgeLargeEnV15` — `BAAI/bge-small-en-v1.5` / `bge-base-en-v1.5` / `bge-large-en-v1.5`
-//! - `AllMpnetBaseV2` — `sentence-transformers/all-mpnet-base-v2`
-//! - `BgeM3` — `BAAI/bge-m3` (dense output only)
+//! Generate `Vec<f32>` embeddings for text or batches of text. Select a
+//! checkpoint via `EmbeddingModel` (defaults to `MiniLmL12`). Inference is
+//! blocking; wrap it in `tokio::task::spawn_blocking` from async contexts.
 //!
 //! # Example
 //!
@@ -44,8 +34,7 @@ mod models;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use burn::tensor::backend::Backend;
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn_dispatch::DispatchDevice;
 
 use crate::embedding::models::bert::{
     BertEmbeddingModel, PoolingStrategy, load_pretrained_bert_embedding,
@@ -56,10 +45,8 @@ use crate::embedding::models::mpnet::{
 use crate::embedding::models::xlm_roberta::{
     XlmRobertaEmbeddingModel, load_pretrained_xlm_roberta_embedding,
 };
+use crate::ml::backend::{self, Backend};
 use crate::ml::{resolve_batch_size, tensor2_to_rows_f32};
-
-/// Default Burn backend.
-type DefaultBackend = Wgpu;
 
 /// Default batch size when the caller does not supply one.
 const DEFAULT_BATCH_SIZE: usize = 32;
@@ -80,10 +67,7 @@ pub enum EmbeddingModel {
     BgeLargeEnV15,
     /// `sentence-transformers/all-mpnet-base-v2`.
     AllMpnetBaseV2,
-    /// BGE-M3 dense embeddings only.
-    ///
-    /// Sparse and multi-vector outputs are separate retrieval concerns and are
-    /// not exposed through this `Vec<f32>` dense embedding API.
+    /// `BAAI/bge-m3` dense embeddings.
     BgeM3,
 }
 
@@ -103,10 +87,10 @@ impl EmbeddingModel {
 }
 
 #[derive(Debug)]
-enum LoadedEmbeddingModel<B: Backend> {
-    Bert(BertEmbeddingModel<B>),
-    Mpnet(MpnetEmbeddingModel<B>),
-    XlmRoberta(XlmRobertaEmbeddingModel<B>),
+enum LoadedEmbeddingModel {
+    Bert(BertEmbeddingModel<Backend>),
+    Mpnet(MpnetEmbeddingModel<Backend>),
+    XlmRoberta(XlmRobertaEmbeddingModel<Backend>),
 }
 
 /// Options for [`TextEmbedding`].
@@ -118,37 +102,22 @@ pub struct TextEmbeddingOptions {
     pub cache_dir: Option<PathBuf>,
 }
 
-/// Minimal text embedding interface inspired by `fastembed-rs`.
-#[derive(Debug)]
-pub struct TextEmbedding<B: Backend = DefaultBackend> {
-    model: LoadedEmbeddingModel<B>,
+/// Text embedding model.
+pub struct TextEmbedding {
+    model: LoadedEmbeddingModel,
     model_kind: EmbeddingModel,
-    device: B::Device,
+    device: DispatchDevice,
 }
 
-impl TextEmbedding<DefaultBackend> {
-    /// Loads the embedding model from `options` onto the default WGPU device.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if model weights, config, or tokenizer fail to download or load.
+impl TextEmbedding {
+    /// Loads the embedding model from `options` onto the default device.
     pub async fn new(options: TextEmbeddingOptions) -> Result<Self> {
-        let device = WgpuDevice::default();
-        Self::new_with_device(&device, options).await
+        Self::new_on(backend::active_device(), options).await
     }
-}
 
-impl<B> TextEmbedding<B>
-where
-    B: Backend,
-{
-    /// Loads the embedding model from `options` onto `device`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if model weights, config, or tokenizer fail to download or load.
-    pub async fn new_with_device(
-        device: &B::Device,
+    /// Loads the embedding model from `options` onto a specific device.
+    pub(crate) async fn new_on(
+        device: DispatchDevice,
         options: TextEmbeddingOptions,
     ) -> Result<Self> {
         let model_kind = options.model;
@@ -156,11 +125,11 @@ where
         // BERT-family models differ only by checkpoint + pooling; MiniLM uses
         // mean pooling, BGE uses CLS. MPNet and XLM-RoBERTa are their own
         // backbones with a single checkpoint each.
-        let model = match model_kind {
+        let model: LoadedEmbeddingModel = match model_kind {
             EmbeddingModel::MiniLmL6 | EmbeddingModel::MiniLmL12 => {
                 LoadedEmbeddingModel::Bert(
                     load_pretrained_bert_embedding(
-                        device,
+                        &device,
                         repo_id,
                         PoolingStrategy::Mean,
                         options.cache_dir,
@@ -172,7 +141,7 @@ where
             | EmbeddingModel::BgeBaseEnV15
             | EmbeddingModel::BgeLargeEnV15 => LoadedEmbeddingModel::Bert(
                 load_pretrained_bert_embedding(
-                    device,
+                    &device,
                     repo_id,
                     PoolingStrategy::Cls,
                     options.cache_dir,
@@ -181,7 +150,7 @@ where
             ),
             EmbeddingModel::AllMpnetBaseV2 => LoadedEmbeddingModel::Mpnet(
                 load_pretrained_mpnet_embedding(
-                    device,
+                    &device,
                     repo_id,
                     options.cache_dir,
                 )
@@ -189,7 +158,7 @@ where
             ),
             EmbeddingModel::BgeM3 => LoadedEmbeddingModel::XlmRoberta(
                 load_pretrained_xlm_roberta_embedding(
-                    device,
+                    &device,
                     repo_id,
                     options.cache_dir,
                 )
@@ -200,126 +169,14 @@ where
         Ok(Self {
             model,
             model_kind,
-            device: device.clone(),
+            device,
         })
     }
 
-    /// Embeds a single document and returns one embedding vector.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_with_prompt`].
-    pub fn embed(&self, document: impl AsRef<str>) -> Result<Vec<f32>> {
-        self.embed_with_prompt(document, None)
-    }
-
-    /// Embeds a single document with an optional input prompt.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_batch_with_prompt`].
-    pub fn embed_with_prompt(
+    /// Embeds a batch of inputs with an optional prompt, one vector per input.
+    fn embed_batch_inner(
         &self,
-        document: impl AsRef<str>,
-        prompt: Option<&str>,
-    ) -> Result<Vec<f32>> {
-        let document = document.as_ref();
-        let documents = [document];
-        let mut embeddings =
-            self.embed_batch_with_prompt(documents.as_slice(), None, prompt)?;
-        embeddings
-            .pop()
-            .context("expected one embedding for a single input document")
-    }
-
-    /// Embeds a search query with no prompt.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_query_with_prompt`].
-    pub fn embed_query(&self, query: impl AsRef<str>) -> Result<Vec<f32>> {
-        self.embed_query_with_prompt(query, None)
-    }
-
-    /// Embeds a search query with an optional input prompt.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_query_batch_with_prompt`].
-    pub fn embed_query_with_prompt(
-        &self,
-        query: impl AsRef<str>,
-        prompt: Option<&str>,
-    ) -> Result<Vec<f32>> {
-        let query = query.as_ref();
-        let queries = [query];
-        let mut embeddings = self.embed_query_batch_with_prompt(
-            queries.as_slice(),
-            None,
-            prompt,
-        )?;
-        embeddings
-            .pop()
-            .context("expected one embedding for a single input query")
-    }
-
-    /// Embeds documents in batches and returns one vector per input string.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_batch_with_prompt`].
-    pub fn embed_batch<S: AsRef<str>>(
-        &self,
-        documents: &[S],
-        batch_size: Option<usize>,
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_batch_with_prompt(documents, batch_size, None)
-    }
-
-    /// Embeds documents with an optional input prompt.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `batch_size` is `Some(0)`, or if tokenization or inference fails.
-    pub fn embed_batch_with_prompt<S: AsRef<str>>(
-        &self,
-        documents: &[S],
-        batch_size: Option<usize>,
-        prompt: Option<&str>,
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_batch_inner(documents, batch_size, prompt)
-    }
-
-    /// Embeds search queries in batches with no prompt.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextEmbedding::embed_query_batch_with_prompt`].
-    pub fn embed_query_batch<S: AsRef<str>>(
-        &self,
-        queries: &[S],
-        batch_size: Option<usize>,
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_query_batch_with_prompt(queries, batch_size, None)
-    }
-
-    /// Embeds search queries in batches with an optional input prompt.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `batch_size` is `Some(0)`, or if tokenization or inference fails.
-    pub fn embed_query_batch_with_prompt<S: AsRef<str>>(
-        &self,
-        queries: &[S],
-        batch_size: Option<usize>,
-        prompt: Option<&str>,
-    ) -> Result<Vec<Vec<f32>>> {
-        self.embed_batch_inner(queries, batch_size, prompt)
-    }
-
-    fn embed_batch_inner<S: AsRef<str>>(
-        &self,
-        inputs: &[S],
+        inputs: &[&str],
         batch_size: Option<usize>,
         prompt: Option<&str>,
     ) -> Result<Vec<Vec<f32>>> {
@@ -332,17 +189,15 @@ where
 
         let mut embeddings = Vec::with_capacity(inputs.len());
         for batch in inputs.chunks(batch_size) {
-            let batch_inputs =
-                batch.iter().map(AsRef::as_ref).collect::<Vec<_>>();
             let batch_embeddings = match &self.model {
                 LoadedEmbeddingModel::Bert(model) => {
-                    model.encode(&batch_inputs, prompt, &self.device)?
+                    model.encode(batch, prompt, &self.device)?
                 }
                 LoadedEmbeddingModel::Mpnet(model) => {
-                    model.encode(&batch_inputs, prompt, &self.device)?
+                    model.encode(batch, prompt, &self.device)?
                 }
                 LoadedEmbeddingModel::XlmRoberta(model) => {
-                    model.encode(&batch_inputs, prompt, &self.device)?
+                    model.encode(batch, prompt, &self.device)?
                 }
             };
             embeddings.extend(tensor2_to_rows_f32(
@@ -354,6 +209,44 @@ where
         Ok(embeddings)
     }
 
+    /// Embeds a single document and returns one embedding vector.
+    pub fn embed(&self, document: impl AsRef<str>) -> Result<Vec<f32>> {
+        self.embed_with_prompt(document, None)
+    }
+
+    /// Embeds a single document with an optional input prompt.
+    pub fn embed_with_prompt(
+        &self,
+        document: impl AsRef<str>,
+        prompt: Option<&str>,
+    ) -> Result<Vec<f32>> {
+        let mut embeddings =
+            self.embed_batch_inner(&[document.as_ref()], None, prompt)?;
+        embeddings
+            .pop()
+            .context("expected one embedding for a single input document")
+    }
+
+    /// Embeds documents in batches and returns one vector per input string.
+    pub fn embed_batch<S: AsRef<str>>(
+        &self,
+        documents: &[S],
+        batch_size: Option<usize>,
+    ) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch_with_prompt(documents, batch_size, None)
+    }
+
+    /// Embeds documents in batches with an optional input prompt.
+    pub fn embed_batch_with_prompt<S: AsRef<str>>(
+        &self,
+        documents: &[S],
+        batch_size: Option<usize>,
+        prompt: Option<&str>,
+    ) -> Result<Vec<Vec<f32>>> {
+        let inputs = documents.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+        self.embed_batch_inner(&inputs, batch_size, prompt)
+    }
+
     /// Returns the loaded embedding checkpoint.
     pub fn model(&self) -> EmbeddingModel {
         self.model_kind
@@ -363,8 +256,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ml::backend::{Backend, cpu_device};
     use burn::tensor::Tensor;
-    use burn_wgpu::{Wgpu, WgpuDevice};
     use std::sync::OnceLock;
     use tokio::sync::Mutex;
 
@@ -412,9 +305,8 @@ mod tests {
         let document = model
             .embed("Hello world")
             .expect("document embed should work");
-        let query = model
-            .embed_query("Hello world")
-            .expect("query embed should work");
+        let query =
+            model.embed("Hello world").expect("query embed should work");
 
         assert_eq!(document.len(), 384);
         assert_eq!(query.len(), 384);
@@ -423,9 +315,8 @@ mod tests {
     #[tokio::test]
     async fn model_minilm_l6_backend_supports_i32_indices() {
         let _guard = live_model_test_lock().lock().await;
-        let device = WgpuDevice::default();
-        let model = TextEmbedding::<Wgpu<f32, i32>>::new_with_device(
-            &device,
+        let model = TextEmbedding::new_on(
+            cpu_device(),
             TextEmbeddingOptions {
                 model: EmbeddingModel::MiniLmL6,
                 cache_dir: None,
@@ -489,8 +380,8 @@ mod tests {
 
     #[test]
     fn util_tensor_rows_extract_returns_rows() {
-        let device = WgpuDevice::default();
-        let embeddings = Tensor::<Wgpu<f32, i64>, 2>::from_floats(
+        let device = cpu_device();
+        let embeddings = Tensor::<Backend, 2>::from_floats(
             [[1.0, 2.0], [3.0, 4.0]],
             &device,
         );

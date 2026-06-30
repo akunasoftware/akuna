@@ -226,6 +226,12 @@ async fn returns_parts_for_syntax_text_fixtures()
 #[cfg(feature = "ocr")]
 #[test]
 fn extracts_png_with_ocr() {
+    // OCR runs a CNN detector + transformer recognizer; on the ndarray CPU
+    // backend in debug builds that is far too slow for CI. This end-to-end
+    // check therefore runs only when a GPU device is available.
+    if !crate::ml::backend::gpu_available() {
+        return;
+    }
     let handle = std::thread::Builder::new()
         .stack_size(128 * 1024 * 1024)
         .spawn(|| {

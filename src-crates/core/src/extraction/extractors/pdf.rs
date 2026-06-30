@@ -42,22 +42,14 @@ pub(in crate::extraction) fn extract(
     use pdf_oxide::extractors::{DocumentElement, StructuredExtractor};
 
     let started = std::time::Instant::now();
-    let mut document =
-        pdf_oxide::PdfDocument::open(file_path).map_err(|error| {
-            FileExtractionError::extraction_engine("pdf_oxide", error)
-        })?;
-    let page_count = document.page_count().map_err(|error| {
-        FileExtractionError::extraction_engine("pdf_oxide", error)
-    })?;
+    let mut document = pdf_oxide::PdfDocument::open(file_path)?;
+    let page_count = document.page_count()?;
     let mut extractor = StructuredExtractor::new();
     let mut parts = Vec::new();
 
     for page_index in 0..page_count {
-        let structured = extractor
-            .extract_page(&mut document, page_index as u32)
-            .map_err(|error| {
-                FileExtractionError::extraction_engine("pdf_oxide", error)
-            })?;
+        let structured =
+            extractor.extract_page(&mut document, page_index as u32)?;
         for element in structured.elements {
             let element_parts = match element {
                 DocumentElement::Header { text, bbox, .. } => {
@@ -94,9 +86,7 @@ pub(in crate::extraction) fn extract(
         }
     }
 
-    let text = document.extract_all_text().map_err(|error| {
-        FileExtractionError::extraction_engine("pdf_oxide", error)
-    })?;
+    let text = document.extract_all_text()?;
 
     let parts = parts
         .into_iter()

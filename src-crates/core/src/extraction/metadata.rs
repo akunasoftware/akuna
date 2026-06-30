@@ -4,11 +4,7 @@ use std::path::Path;
 
 use crate::extraction::{ExtractionMetadata, FileExtractionError};
 
-/// Detect or infer file type and assemble metadata from raw bytes.
-///
-/// # Errors
-///
-/// Returns [`FileExtractionError`] if enabled detection fails.
+/// Detect the file type and assemble metadata from raw bytes.
 pub(in crate::extraction) fn from_bytes(
     bytes: &[u8],
     source_path: Option<&Path>,
@@ -42,15 +38,11 @@ struct DetectionResult {
     is_text: bool,
 }
 
-/// Detect file type from bytes using the Magika ML model.
-///
-/// # Errors
-///
-/// Returns [`FileExtractionError`] if the Magika session fails to load or infer.
+/// Detect the file type from bytes.
 fn detect_content_type(
     bytes: &[u8],
 ) -> Result<DetectionResult, FileExtractionError> {
-    let mut magika = crate::detection::Session::new_default()?;
+    let magika = crate::detection::Session::new()?;
     let type_info = magika.identify_content_sync(bytes)?.info();
 
     Ok(DetectionResult {

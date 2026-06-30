@@ -119,16 +119,3 @@ impl From<rbook::reader::errors::ReaderError> for FileExtractionError {
         }
     }
 }
-
-impl FileExtractionError {
-    /// Wrap an extraction engine error with engine context.
-    pub(crate) fn extraction_engine(
-        engine: &'static str,
-        source: impl std::error::Error + Send + Sync + 'static,
-    ) -> Self {
-        Self::ExtractionEngine {
-            engine,
-            source: Box::new(source),
-        }
-    }
-}

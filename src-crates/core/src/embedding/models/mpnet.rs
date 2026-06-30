@@ -79,14 +79,7 @@ pub(crate) struct MpnetEmbeddingModel<B: Backend> {
 
 impl MpnetConfig {
     fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!("failed to read embedding config at {}", path.display())
-        })?;
-
-        serde_json::from_str(&content).with_context(|| {
-            format!("failed to parse embedding config at {}", path.display())
-        })
+        crate::ml::load_json_config(path.as_ref(), "embedding config")
     }
 
     fn init<B: Backend>(&self, device: &B::Device) -> MpnetModel<B> {
@@ -299,10 +292,6 @@ where
     B: Backend,
 {
     /// Runs the model over a batch and returns L2-normalized embeddings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if tokenization or model inference fails.
     pub(crate) fn encode(
         &self,
         sentences: &[&str],
@@ -328,10 +317,6 @@ where
 }
 
 /// Loads a pretrained MPNet embedding model from Hugging Face.
-///
-/// # Errors
-///
-/// Returns an error if download, config parse, tokenizer load, or weight remap fails.
 pub(crate) async fn load_pretrained_mpnet_embedding<B>(
     device: &B::Device,
     repo_id: &str,

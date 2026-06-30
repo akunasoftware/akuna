@@ -3,20 +3,14 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 /// Top-level extraction configuration.
-///
-/// File contents are read when content or parts output is requested.
 pub struct ExtractionConfig {
     /// Include inferred file metadata in the result.
     pub return_metadata: bool,
     /// Include extracted content in the result.
-    ///
-    /// When `false`, content may still be built internally for parts output.
     pub return_content: bool,
     /// Include structured content parts in the result.
-    ///
-    /// When `false`, extraction may still build parts internally for other outputs.
     pub return_parts: bool,
-    /// OCR model configuration for image extraction paths.
+    /// OCR configuration for image extraction.
     #[cfg(feature = "ocr")]
     pub ocr: crate::ocr::OcrOptions,
 }

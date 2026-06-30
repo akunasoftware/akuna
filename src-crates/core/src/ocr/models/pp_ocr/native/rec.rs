@@ -1,6 +1,4 @@
-//! Native PP-OCRv6 text-recognition model (LCNetV4 backbone -> light-SVTR neck
-//! -> CTC head), loaded from HuggingFace safetensors. Produces softmax CTC
-//! posteriors `[1, seq, num_classes]` consumed by `postprocess_recognizer`.
+//! PP-OCRv6 text recognizer for the small and medium tiers.
 
 use anyhow::Result;
 use burn::nn::PaddingConfig2d;
@@ -21,21 +19,17 @@ const HEADS: usize = 8;
 const SVTR_EPS: f64 = 1e-5;
 const FINAL_NORM_EPS: f64 = 1e-6;
 
-/// Tier-specific recognizer widths (small / medium light-SVTR architecture).
+/// Tier-specific recognizer widths for the small and medium tiers.
 pub(crate) struct RecConfig {
-    /// `stem1` output width; the stem produces `2 * stem_base` channels.
     stem_base: usize,
     block_specs: fn() -> Vec<BlockSpec>,
-    /// Backbone output channels (the neck conv-block input).
     backbone_out: usize,
-    /// SVTR embedding dim (= neck conv-block output).
     dim: usize,
     head_dim: usize,
-    /// SVTR MLP hidden width.
     mlp_hidden: usize,
 }
 
-/// One pre-norm SVTR transformer block.
+/// One transformer block of the recognizer neck.
 #[derive(Debug)]
 struct SvtrBlock<B: Backend> {
     norm1: LayerNormLayer<B>,
@@ -360,8 +354,7 @@ fn small_block_specs() -> Vec<BlockSpec> {
     ]
 }
 
-/// Returns the small/medium light-SVTR recognizer config. Tiny uses a different
-/// head architecture (conv-only — see `rec_tiny`) and is handled separately.
+/// Returns the recognizer config for the small or medium tier.
 pub(crate) fn rec_config(recognizer: crate::ocr::OcrRecognizer) -> RecConfig {
     use crate::ocr::OcrRecognizer;
     match recognizer {
@@ -387,9 +380,7 @@ pub(crate) fn rec_config(recognizer: crate::ocr::OcrRecognizer) -> RecConfig {
     }
 }
 
-/// Backbone block table for the medium tier. Stage 1 opens with a stride-`[1,1]`
-/// transition block (channel change, no residual); spatial downsamples are at
-/// 2.0 and 3.0.
+/// Backbone block table for the medium tier.
 fn medium_block_specs() -> Vec<BlockSpec> {
     let normal = |stage, idx, ch, hidden, se_reduced| BlockSpec {
         stage,

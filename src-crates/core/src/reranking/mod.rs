@@ -1,14 +1,8 @@
-//! Cross-encoder text reranking built with Burn.
+//! Cross-encoder text reranking.
 //!
-//! Scores and ranks documents against a query. Inference is blocking; wrap it
-//! in `tokio::task::spawn_blocking` when calling from async contexts.
-//!
-//! # Models
-//!
-//! Select a checkpoint via [`RerankingModel`][crate::reranking::RerankingModel]
-//! (defaults to `BgeRerankerBase`):
-//!
-//! - `BgeRerankerBase` — `BAAI/bge-reranker-base`
+//! Scores and ranks documents against a query. Select a checkpoint via
+//! `RerankingModel` (defaults to `BgeRerankerBase`). Inference is blocking;
+//! wrap it in `tokio::task::spawn_blocking` from async contexts.
 //!
 //! # Example
 //!
@@ -35,17 +29,14 @@ mod models;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use burn::tensor::backend::Backend;
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn_dispatch::DispatchDevice;
 
+use crate::ml::backend::{self, Backend};
 use crate::ml::{resolve_batch_size, sigmoid_f32, tensor1_to_vec_f32};
 
 use crate::reranking::models::xlm_roberta::{
     XlmRobertaRerankerModel, load_pretrained_xlm_roberta_reranker,
 };
-
-/// Default Burn backend used by this module.
-type DefaultBackend = Wgpu;
 /// Default inference batch size when callers do not override it.
 const DEFAULT_BATCH_SIZE: usize = 32;
 
@@ -99,92 +90,39 @@ pub struct RerankOptions {
     pub batch_size: Option<usize>,
 }
 
-/// Cross-encoder text reranker backed by Burn.
-#[derive(Debug)]
-pub struct TextReranker<B: Backend = DefaultBackend> {
-    model: XlmRobertaRerankerModel<B>,
-    device: B::Device,
+/// Cross-encoder text reranker.
+pub struct TextReranker {
+    model: XlmRobertaRerankerModel<Backend>,
+    device: DispatchDevice,
 }
 
-impl TextReranker<DefaultBackend> {
-    /// Loads the default reranker model with default options.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if model weights, config, or tokenizer fail to download or load.
-    pub async fn try_new() -> Result<Self> {
-        Self::new(Default::default()).await
-    }
-
-    /// Loads a reranker on the default device using `options`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if model weights, config, or tokenizer fail to download or load.
+impl TextReranker {
+    /// Loads a reranker from `options` onto the default device.
     pub async fn new(options: TextRerankerOptions) -> Result<Self> {
-        let device = WgpuDevice::default();
-        Self::new_with_device(&device, options).await
+        Self::new_on(backend::active_device(), options).await
     }
-}
 
-impl<B> TextReranker<B>
-where
-    B: Backend,
-{
-    /// Loads a reranker on a specific device using `options`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if model weights, config, or tokenizer fail to download or load.
-    pub async fn new_with_device(
-        device: &B::Device,
+    /// Loads a reranker from `options` onto a specific device.
+    pub(crate) async fn new_on(
+        device: DispatchDevice,
         options: TextRerankerOptions,
     ) -> Result<Self> {
         let model = load_pretrained_xlm_roberta_reranker(
-            device,
+            &device,
             options.model.repo_id(),
             options.cache_dir,
         )
         .await?;
 
-        Ok(Self {
-            model,
-            device: device.clone(),
-        })
+        Ok(Self { model, device })
     }
 
-    /// Scores a single query/document pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if batched scoring fails or the model returns no output.
-    pub fn score(
+    /// Scores query/document pairs in batches, one score per pair.
+    fn score_batch_inner(
         &self,
-        query: impl AsRef<str>,
-        document: impl AsRef<str>,
-    ) -> Result<f32> {
-        let mut scores =
-            self.score_batch(&[(query.as_ref(), document.as_ref())], None)?;
-        scores
-            .pop()
-            .context("expected one score for a single input pair")
-    }
-
-    /// Scores many query/document pairs in batches.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `batch_size` is zero, tokenization fails, inference fails,
-    /// or the output tensor cannot be read.
-    pub fn score_batch<Q, D>(
-        &self,
-        pairs: &[(Q, D)],
+        pairs: &[(&str, &str)],
         batch_size: Option<usize>,
-    ) -> Result<Vec<f32>>
-    where
-        Q: AsRef<str>,
-        D: AsRef<str>,
-    {
+    ) -> Result<Vec<f32>> {
         if pairs.is_empty() {
             return Ok(Vec::new());
         }
@@ -194,11 +132,7 @@ where
         let mut scores = Vec::with_capacity(pairs.len());
 
         for batch in pairs.chunks(batch_size) {
-            let batch_pairs = batch
-                .iter()
-                .map(|(query, document)| (query.as_ref(), document.as_ref()))
-                .collect::<Vec<_>>();
-            let batch_scores = self.model.score(&batch_pairs, &self.device)?;
+            let batch_scores = self.model.score(batch, &self.device)?;
             scores.extend(tensor1_to_vec_f32(
                 batch_scores,
                 "failed to read reranker output tensor",
@@ -208,11 +142,37 @@ where
         Ok(scores)
     }
 
+    /// Scores a single query/document pair.
+    pub fn score(
+        &self,
+        query: impl AsRef<str>,
+        document: impl AsRef<str>,
+    ) -> Result<f32> {
+        let mut scores = self
+            .score_batch_inner(&[(query.as_ref(), document.as_ref())], None)?;
+        scores
+            .pop()
+            .context("expected one score for a single input pair")
+    }
+
+    /// Scores many query/document pairs in batches.
+    pub fn score_batch<Q, D>(
+        &self,
+        pairs: &[(Q, D)],
+        batch_size: Option<usize>,
+    ) -> Result<Vec<f32>>
+    where
+        Q: AsRef<str>,
+        D: AsRef<str>,
+    {
+        let refs = pairs
+            .iter()
+            .map(|(query, document)| (query.as_ref(), document.as_ref()))
+            .collect::<Vec<_>>();
+        self.score_batch_inner(&refs, batch_size)
+    }
+
     /// Ranks documents against a query using default options.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from [`TextReranker::rerank_with_options`].
     pub fn rerank<S: AsRef<str>>(
         &self,
         query: impl AsRef<str>,
@@ -222,10 +182,6 @@ where
     }
 
     /// Ranks documents against a query with custom options.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `top_k` is zero or batched scoring fails.
     pub fn rerank_with_options<S: AsRef<str>>(
         &self,
         query: impl AsRef<str>,
@@ -240,7 +196,7 @@ where
             .iter()
             .map(|document| (query, *document))
             .collect::<Vec<_>>();
-        let scores = self.score_batch(&pairs, options.batch_size)?;
+        let scores = self.score_batch_inner(&pairs, options.batch_size)?;
         let mut indexed_scores = scores
             .into_iter()
             .enumerate()

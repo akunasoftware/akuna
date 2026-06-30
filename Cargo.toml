@@ -30,11 +30,25 @@ tokenizers = "0.22.2"
 onnx-ir = "0.21.0-pre.3"
 protobuf = "3.7.2"
 safetensors = "0.7.0"
-burn = { version = "0.21.0-pre.3" }
-burn-wgpu = { version = "0.21.0-pre.3", default-features = false, features = ["std", "webgpu"] }
+burn = { version = "0.21.0" }
+# Single runtime-dispatched backend: one non-generic `Dispatch` type whose
+# *device* selects wgpu (GPU) or ndarray (CPU) at runtime. `webgpu` gives the
+# cross-platform wgpu backend (Metal/Vulkan/DX12); `ndarray` is the pure-Rust
+# CPU fallback. Only these two backends are compiled (no CUDA/MLIR/tch chains).
+burn-dispatch = { version = "0.21.0", default-features = false, features = ["webgpu", "ndarray", "std"] }
+# burn-wgpu / burn-ndarray are pulled in by burn-dispatch; kept as direct deps
+# only to name the concrete `WgpuDevice` / `NdArrayDevice` device types.
+burn-wgpu = { version = "0.21.0", default-features = false, features = ["std", "webgpu"] }
+# Default features bring `simd` + `multi-threads` (both pure-Rust) so the CPU
+# fallback backend is not pathologically slow.
+burn-ndarray = { version = "0.21.0" }
 burn-store = { version = "0.21.0-pre.3", features = ["std", "safetensors"] }
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "ureq", "rustls-tls"] }
 image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "webp"] }
+# Runtime GPU-adapter probe for auto backend selection (wgpu version must match
+# the one cubecl-wgpu pulls so the dependency graph stays unified).
+wgpu = "29"
+pollster = "0.4"
 
 [workspace.lints.rust]
 missing_docs = "deny"

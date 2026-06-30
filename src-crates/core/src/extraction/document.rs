@@ -11,11 +11,6 @@ use crate::extraction::{
 };
 
 /// Extract content and metadata from a document path.
-///
-/// # Errors
-///
-/// Returns [`FileExtractionError`] if path validation, type detection,
-/// or content extraction fails.
 pub async fn from_path(
     file_path: &Path,
     config: &ExtractionConfig,
@@ -27,10 +22,6 @@ pub async fn from_path(
 }
 
 /// Extract content and metadata from bytes with optional source path.
-///
-/// # Errors
-///
-/// Returns [`FileExtractionError`] if type detection or content extraction fails.
 async fn from_bytes_with_source_path(
     bytes: &[u8],
     source_path: Option<&Path>,

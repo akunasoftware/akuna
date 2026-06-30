@@ -29,13 +29,13 @@ full = [
 ]
 
 # Module features
-detection = ["ml", "dep:burn-wgpu", "dep:safetensors"]
-embedding = ["ml", "dep:burn-wgpu", "dep:tokenizers"]
+detection = ["ml", "dep:safetensors"]
+embedding = ["ml", "dep:tokenizers"]
 extraction = ["detection", "dep:tokio", "dep:omniparse", "dep:pdf_oxide", "dep:office_oxide", "dep:rbook", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-c", "dep:tree-sitter-c-sharp", "dep:tree-sitter-containerfile", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-dart", "dep:tree-sitter-go", "dep:tree-sitter-graphql", "dep:tree-sitter-groovy", "dep:tree-sitter-hcl", "dep:tree-sitter-html", "dep:tree-sitter-java", "dep:tree-sitter-javascript", "dep:tree-sitter-json", "dep:tree-sitter-lua", "dep:tree-sitter-md", "dep:tree-sitter-php", "dep:tree-sitter-python", "dep:tree-sitter-ruby", "dep:tree-sitter-rust", "dep:tree-sitter-scala", "dep:tree-sitter-scss", "dep:tree-sitter-sequel", "dep:tree-sitter-svelte-next", "dep:tree-sitter-swift", "dep:tree-sitter-typescript", "dep:tree-sitter-vue-updated", "dep:tree-sitter-yaml"]
-layout = ["ml", "dep:burn-wgpu", "dep:image", "dep:safetensors"]
-ml = ["dep:burn", "dep:burn-store", "dep:hf-hub"]
+layout = ["ml", "dep:image", "dep:safetensors"]
+ml = ["dep:burn", "dep:burn-dispatch", "dep:burn-wgpu", "dep:burn-ndarray", "dep:burn-store", "dep:hf-hub", "dep:wgpu", "dep:pollster"]
 ocr = ["layout", "dep:tokenizers"]
-reranking = ["ml", "dep:burn-wgpu", "dep:tokenizers"]
+reranking = ["ml", "dep:tokenizers"]
 storage = ["dep:grafeo"]
 
 [package.metadata.docs.rs]
@@ -52,12 +52,19 @@ utoipa = { workspace = true }
 
 # ML stack (detection, embedding, layout, reranking)
 burn = { workspace = true, optional = true }
+# Single runtime-dispatched backend; wgpu (GPU) or ndarray (CPU) chosen by device.
+burn-dispatch = { workspace = true, optional = true }
+# Direct deps only to name the concrete GPU/CPU device types for `DispatchDevice`.
 burn-wgpu = { workspace = true, optional = true }
+burn-ndarray = { workspace = true, optional = true }
 burn-store = { workspace = true, optional = true }
 hf-hub = { workspace = true, optional = true }
 safetensors = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+# Runtime GPU-adapter probe for auto backend selection.
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 # Storage (graph backend)
 grafeo = { version = "0.5.42", default-features = false, features = ["embedded", "hybrid-search", "rdf", "text-index", "vector-index"], optional = true }

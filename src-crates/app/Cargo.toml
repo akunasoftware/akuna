@@ -16,7 +16,6 @@ workspace = true
 
 # shared workspace deps
 anyhow.workspace = true
-schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

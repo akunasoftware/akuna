@@ -1,13 +1,4 @@
-//! A BERT-style post-LayerNorm transformer encoder that is bit-for-bit
-//! identical to burn 0.21's `TransformerEncoder` (with `norm_first=false`,
-//! `quiet_softmax=false`, dropout 0), except the two batched attention matmuls
-//! go through [`safe_matmul`] to work around the burn-wgpu 0.21 large-`K`
-//! matmul bug (which corrupts `attention_weights @ value` at sequence length
-//! >= 512). Parameter paths match burn's encoder exactly, so existing
-//! safetensors key remapping and weight loading are unchanged.
-//!
-//! Delete this module and revert to burn's `TransformerEncoder` once burn ships
-//! a stable release with the kernel bug fixed.
+//! A BERT-style post-LayerNorm transformer encoder.
 
 use burn::module::Module;
 use burn::nn::{LayerNorm, LayerNormConfig, Linear, LinearConfig};
@@ -17,12 +8,27 @@ use burn::tensor::{Bool, Tensor};
 
 use crate::ml::safe_matmul;
 
-/// Mask fill value burn's MHA uses for padded positions (`mha.rs:28`).
+/// Mask fill value used for padded positions.
 const MASK_FILL: f32 = -1.0e4;
 
-/// Applies a burn `Linear` (`[d_in, d_out]` weight, `O = I·W + b`) through
-/// [`safe_matmul`]. burn's own `Linear::forward` uses the native matmul, which
-/// corrupts when both the row count (`batch*seq`) and `d_in` reach 512.
+/// Weight-key remap patterns mapping a Hugging Face BERT encoder onto
+/// [`BertEncoder`]'s module layout. Callers prepend their model's prefix rules
+/// (e.g. stripping `bert.`/`roberta.`) and append the embeddings LayerNorm rule.
+pub(crate) fn bert_encoder_remap() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("encoder\\.layer\\.([0-9]+)", "encoder.layers.$1"),
+        ("attention\\.self\\.query", "mha.query"),
+        ("attention\\.self\\.key", "mha.key"),
+        ("attention\\.self\\.value", "mha.value"),
+        ("attention\\.output\\.dense", "mha.output"),
+        ("attention\\.output\\.LayerNorm", "norm_1"),
+        ("intermediate\\.dense", "pwff.linear_inner"),
+        ("(layers\\.[0-9]+)\\.output\\.dense", "$1.pwff.linear_outer"),
+        ("(layers\\.[0-9]+)\\.output\\.LayerNorm", "$1.norm_2"),
+    ]
+}
+
+/// Applies a burn `Linear` (`O = I·W + b`) to a `[batch, seq, d_in]` input.
 fn linear_safe<B: Backend>(
     linear: &Linear<B>,
     x: Tensor<B, 3>,
@@ -37,7 +43,7 @@ fn linear_safe<B: Backend>(
     out.reshape([batch, seq, d_out])
 }
 
-/// Config mirroring the subset of `TransformerEncoderConfig` we use.
+/// Configuration for a [`BertEncoder`].
 pub(crate) struct EncoderConfig {
     pub d_model: usize,
     pub d_ff: usize,
@@ -155,7 +161,7 @@ impl<B: Backend> EncoderLayer<B> {
     }
 }
 
-/// Drop-in replacement for burn's `TransformerEncoder` (post-LN BERT).
+/// A post-LayerNorm BERT transformer encoder.
 #[derive(Module, Debug)]
 pub(crate) struct BertEncoder<B: Backend> {
     layers: Vec<EncoderLayer<B>>,

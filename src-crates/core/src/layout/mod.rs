@@ -1,8 +1,5 @@
-//! Document layout detection built with Burn.
-//!
-//! Detects reading-order layout blocks (text, title, list, table, figure)
-//! from page images. Layout detection is separate from OCR so callers can
-//! use page structure without enabling text recognition engines.
+//! Detects reading-order layout blocks (text, title, list, table, figure) from
+//! page images, independently of OCR.
 //!
 //! # Models
 //!
@@ -24,8 +21,7 @@
 
 use std::path::PathBuf;
 
-use burn::tensor::backend::Backend;
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn_dispatch::DispatchDevice;
 use image::DynamicImage;
 
 mod models;
@@ -33,9 +29,7 @@ mod models;
 use crate::layout::models::pp_doclayout::{
     PpDocLayoutRuntime, load_pp_doclayout_runtime,
 };
-
-/// Default layout backend.
-pub(crate) type DefaultLayoutBackend = Wgpu;
+use crate::ml::backend::{self, Backend};
 
 /// Supported document layout model checkpoints.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -52,13 +46,6 @@ pub struct LayoutOptions {
     pub model: LayoutModel,
     /// Optional model download cache directory.
     pub cache_dir: Option<PathBuf>,
-}
-
-/// Layout detector runtime.
-#[derive(Debug)]
-pub struct LayoutDetector<B: Backend = DefaultLayoutBackend> {
-    runtime: PpDocLayoutRuntime<B>,
-    device: B::Device,
 }
 
 /// Layout detection failure.
@@ -138,50 +125,35 @@ pub struct LayoutRect {
     pub height: f32,
 }
 
-impl LayoutDetector<DefaultLayoutBackend> {
-    /// Load default layout detector.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when model files cannot be loaded.
-    pub async fn new(options: LayoutOptions) -> Result<Self, LayoutError> {
-        let device = WgpuDevice::default();
-        Self::new_with_device(&device, options).await
-    }
+/// Detects document layout blocks from page images.
+pub struct LayoutDetector {
+    runtime: PpDocLayoutRuntime<Backend>,
+    device: DispatchDevice,
 }
 
-impl<B> LayoutDetector<B>
-where
-    B: Backend<FloatElem = f32>,
-{
-    /// Load layout detector on caller-provided device.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when model files cannot be loaded.
-    pub async fn new_with_device(
-        device: &B::Device,
+impl LayoutDetector {
+    /// Loads the layout detector from `options`.
+    pub async fn new(options: LayoutOptions) -> Result<Self, LayoutError> {
+        Self::new_on(backend::active_device(), options).await
+    }
+
+    /// Loads the layout detector from `options` onto a specific device.
+    pub(crate) async fn new_on(
+        device: DispatchDevice,
         options: LayoutOptions,
     ) -> Result<Self, LayoutError> {
         let runtime = match options.model {
             LayoutModel::PpDocLayoutV3 => {
-                load_pp_doclayout_runtime(device, options.cache_dir)
+                load_pp_doclayout_runtime(&device, options.cache_dir)
                     .await
                     .map_err(|source| LayoutError::Load { source })?
             }
         };
 
-        Ok(Self {
-            runtime,
-            device: device.clone(),
-        })
+        Ok(Self { runtime, device })
     }
 
-    /// Detect layout blocks from decoded image.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when preprocessing or inference fails.
+    /// Detects layout blocks from a decoded image.
     pub fn detect_image(
         &self,
         image: &DynamicImage,

@@ -1,5 +1,4 @@
-//! Native (pure-burn) PP-OCRv6 detection and recognition models that load
-//! directly from HuggingFace safetensors — no ONNX-generated code or `.bpk`.
+//! PP-OCRv6 text detection and recognition models.
 
 pub(in crate::ocr) mod det;
 pub(in crate::ocr) mod det_medium;

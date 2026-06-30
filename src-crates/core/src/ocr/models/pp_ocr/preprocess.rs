@@ -5,9 +5,7 @@ use crate::ocr::models::pp_ocr::spec::{
     PpOcrDetectorConfig, PpOcrRecognizerConfig,
 };
 
-/// Safety ceiling for recognizer width (the model is fully width-dynamic but
-/// memory grows linearly with width). The trained nominal width is 320, so
-/// anything past a few thousand is well outside the trained distribution.
+/// Upper bound on recognizer input width.
 const MAX_RECOGNIZER_WIDTH: usize = 2048;
 
 #[derive(Debug)]
@@ -56,9 +54,7 @@ pub(crate) fn preprocess_detector(
     })
 }
 
-/// PaddleOCR detector resize target: fit the longest side to `limit_side_len`
-/// (only downscaling), then round each side to a multiple of 32 using Python's
-/// banker's rounding, with a floor of 32. Returns `(width, height)`.
+/// Returns the detector input `(width, height)` for an image of the given size.
 fn detector_resize_dims(
     width: u32,
     height: u32,
@@ -114,7 +110,7 @@ pub(crate) fn preprocess_recognizer(
     })
 }
 
-/// Normalises an RGB image into a CHW `f32` tensor (PP-OCRv6 trains on RGB).
+/// Normalises an RGB image into a CHW `f32` tensor.
 fn normalized_nchw(
     rgb: &image::RgbImage,
     target_width: usize,

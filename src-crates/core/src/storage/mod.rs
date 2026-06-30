@@ -1,13 +1,9 @@
-//! Graph storage and retrieval built on `grafeo`.
+//! Graph storage and retrieval.
 //!
-//! Provides the backend-neutral [`crate::storage::graph::GraphDbContext`] trait alongside
-//! node, edge, and search types. Backend implementations are crate-private
-//! and reached through [`crate::storage::graph::open_context`] or
-//! [`crate::storage::graph::in_memory_context`].
-//!
-//! These items live in the `graph` submodule and are re-exported at the
-//! `storage` root, so `akuna_core::storage::GraphNode` works the same as
-//! `akuna_core::storage::graph::GraphNode`.
+//! Open a context with [`crate::storage::graph::open_context`] or
+//! [`crate::storage::graph::in_memory_context`] and work through the
+//! [`crate::storage::graph::GraphDbContext`] trait and its node, edge, and
+//! search types. Items are re-exported at the `storage` root.
 //!
 //! # Example
 //!

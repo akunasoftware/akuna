@@ -8,7 +8,7 @@ use burn::nn::{
 };
 use burn::tensor::{Bool, Int, Tensor, backend::Backend};
 
-use crate::ml::transformer::{BertEncoder, EncoderConfig};
+use crate::ml::transformer::{BertEncoder, EncoderConfig, bert_encoder_remap};
 use burn_store::{KeyRemapper, ModuleSnapshot, PytorchStore};
 use serde::Deserialize;
 use tokenizers::{Tokenizer, TruncationParams};
@@ -67,14 +67,7 @@ pub(crate) struct XlmRobertaEmbeddingModel<B: Backend> {
 
 impl XlmRobertaConfig {
     fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!("failed to read embedding config at {}", path.display())
-        })?;
-
-        serde_json::from_str(&content).with_context(|| {
-            format!("failed to parse embedding config at {}", path.display())
-        })
+        crate::ml::load_json_config(path.as_ref(), "embedding config")
     }
 
     fn init<B: Backend>(&self, device: &B::Device) -> XlmRobertaModel<B> {
@@ -168,10 +161,6 @@ where
     B: Backend,
 {
     /// Runs the model over a batch and returns L2-normalized embeddings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if tokenization or model inference fails.
     pub(crate) fn encode(
         &self,
         sentences: &[&str],
@@ -199,10 +188,6 @@ where
 }
 
 /// Loads a pretrained XLM-RoBERTa embedding model from Hugging Face.
-///
-/// # Errors
-///
-/// Returns an error if download, config parse, tokenizer load, or weight remap fails.
 pub(crate) async fn load_pretrained_xlm_roberta_embedding<B>(
     device: &B::Device,
     repo_id: &str,
@@ -250,20 +235,10 @@ fn load_pretrained_weights<B: Backend>(
     model: &mut XlmRobertaModel<B>,
     checkpoint_path: impl AsRef<Path>,
 ) -> Result<()> {
-    let key_mappings = vec![
-        ("^roberta\\.(.+)", "$1"),
-        ("^xlm_roberta\\.(.+)", "$1"),
-        ("encoder\\.layer\\.([0-9]+)", "encoder.layers.$1"),
-        ("attention\\.self\\.query", "mha.query"),
-        ("attention\\.self\\.key", "mha.key"),
-        ("attention\\.self\\.value", "mha.value"),
-        ("attention\\.output\\.dense", "mha.output"),
-        ("attention\\.output\\.LayerNorm", "norm_1"),
-        ("intermediate\\.dense", "pwff.linear_inner"),
-        ("(layers\\.[0-9]+)\\.output\\.dense", "$1.pwff.linear_outer"),
-        ("(layers\\.[0-9]+)\\.output\\.LayerNorm", "$1.norm_2"),
-        ("embeddings\\.LayerNorm", "embeddings.layer_norm"),
-    ];
+    let mut key_mappings =
+        vec![("^roberta\\.(.+)", "$1"), ("^xlm_roberta\\.(.+)", "$1")];
+    key_mappings.extend(bert_encoder_remap());
+    key_mappings.push(("embeddings\\.LayerNorm", "embeddings.layer_norm"));
 
     let remapper = KeyRemapper::from_patterns(key_mappings)
         .context("failed to create embedding weight remapper")?;

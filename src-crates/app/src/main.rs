@@ -1,12 +1,5 @@
-//! Command-line interface for knowledge tools.
-//!
-//! Wires together extraction, schema generation, and the local REST API
-//! server on top of the shared `akuna-core` workspace crate.
-//!
-//! Subcommands:
-//! - `extract`: extract metadata and structured content parts from a file
-//! - `schemas`: generate app and OpenAPI JSON schemas
-//! - `serve`: run the local HTTP API server
+//! Command-line interface for knowledge tools: extraction, schema generation,
+//! and the local REST API server.
 //!
 //! # Example
 //!
@@ -18,7 +11,6 @@
 
 mod api;
 mod cli;
-mod config;
 mod tracing;
 
 use anyhow::Result;

@@ -21,51 +21,16 @@ use image::{DynamicImage, GenericImageView};
 use safetensors::{Dtype, SafeTensors};
 use serde::Deserialize;
 
-use crate::ml::sigmoid_f32;
+use crate::ml::burn_nn::{
+    batch_norm_inference, gelu, relu, sigmoid as sigmoid_tensor, silu,
+};
+use crate::ml::{safe_matmul, sigmoid_f32};
 
 const PP_DOCLAYOUT_REPO_ID: &str = "PaddlePaddle/PP-DocLayoutV3_safetensors";
 const PP_DOCLAYOUT_CONFIG: &str = "config.json";
 const PP_DOCLAYOUT_PREPROCESSOR: &str = "preprocessor_config.json";
 const PP_DOCLAYOUT_WEIGHTS: &str = "model.safetensors";
 const PP_DOCLAYOUT_WEIGHTS_ENV: &str = "PP_DOCLAYOUT_WEIGHTS";
-
-/// Maximum contraction-dim (K) chunk for [`safe_matmul`]. burn-wgpu 0.21's
-/// matmul silently returns wrong results when K (the shared/contraction
-/// dimension) exceeds 256, so we split K into chunks at or below this size and
-/// sum the partial products (mathematically exact).
-const SAFE_MATMUL_K: usize = 256;
-
-/// `lhs @ rhs` that works around the burn-wgpu 0.21 large-K matmul bug.
-///
-/// Generic over rank: the contraction dim K is the last axis of `lhs` and the
-/// second-to-last of `rhs`. When `K > SAFE_MATMUL_K` the contraction is split
-/// into K-chunks and the partial products are summed (mathematically exact).
-/// Smaller K uses the backend matmul directly. Verified against a CPU reference
-/// in the `matmul_probe` tests.
-fn safe_matmul<B: Backend<FloatElem = f32>, const D: usize>(
-    lhs: Tensor<B, D>,
-    rhs: Tensor<B, D>,
-) -> Tensor<B, D> {
-    let k = lhs.dims()[D - 1];
-    if k <= SAFE_MATMUL_K {
-        return lhs.matmul(rhs);
-    }
-    let mut acc: Option<Tensor<B, D>> = None;
-    let mut start = 0usize;
-    while start < k {
-        let len = (k - start).min(SAFE_MATMUL_K);
-        let part = lhs
-            .clone()
-            .narrow(D - 1, start, len)
-            .matmul(rhs.clone().narrow(D - 2, start, len));
-        acc = Some(match acc {
-            None => part,
-            Some(previous) => previous + part,
-        });
-        start += len;
-    }
-    acc.expect("safe_matmul K > 0")
-}
 
 #[derive(Debug, Clone)]
 struct PpDocLayoutFiles {
@@ -2759,35 +2724,6 @@ fn logit(value: f32) -> f32 {
     (value / (1.0 - value)).ln()
 }
 
-fn relu<B: Backend<FloatElem = f32>, const D: usize>(
-    x: Tensor<B, D>,
-) -> Tensor<B, D> {
-    x.clamp_min(0.0)
-}
-
-fn gelu<B: Backend<FloatElem = f32>, const D: usize>(
-    x: Tensor<B, D>,
-) -> Tensor<B, D> {
-    x.clone() * 0.5 * ((x / std::f64::consts::SQRT_2).erf() + 1.0)
-}
-
-fn batch_norm_inference<B: Backend<FloatElem = f32>>(
-    x: Tensor<B, 4>,
-    weight: Tensor<B, 1>,
-    bias: Tensor<B, 1>,
-    running_mean: Tensor<B, 1>,
-    running_var: Tensor<B, 1>,
-    epsilon: f64,
-) -> Tensor<B, 4> {
-    let [_batch, channels, _height, _width] = x.dims();
-    let shape = [1, channels, 1, 1];
-
-    (x - running_mean.reshape(shape))
-        * (running_var.reshape(shape) + epsilon).sqrt().recip()
-        * weight.reshape(shape)
-        + bias.reshape(shape)
-}
-
 fn read_f32_values(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -2814,18 +2750,6 @@ fn read_f32_values(
             f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
         })
         .collect())
-}
-
-fn silu<B: Backend<FloatElem = f32>, const D: usize>(
-    x: Tensor<B, D>,
-) -> Tensor<B, D> {
-    x.clone() / ((x * -1.0).exp() + 1.0)
-}
-
-fn sigmoid_tensor<B: Backend<FloatElem = f32>, const D: usize>(
-    x: Tensor<B, D>,
-) -> Tensor<B, D> {
-    ((x * -1.0).exp() + 1.0).recip()
 }
 
 fn inverse_sigmoid_tensor<B: Backend<FloatElem = f32>, const D: usize>(
@@ -2856,7 +2780,7 @@ pub(crate) fn bbox_iou(left: [f32; 4], right: [f32; 4]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn_wgpu::{Wgpu, WgpuDevice};
+    use crate::ml::backend::{self, Backend};
 
     fn cpu_matmul(
         a: &[f32],
@@ -2879,8 +2803,8 @@ mod tests {
     }
 
     fn max_abs_err(m: usize, k: usize, n: usize) -> f32 {
-        type B = Wgpu;
-        let device = WgpuDevice::default();
+        type B = Backend;
+        let device = backend::gpu_device();
         let a: Vec<f32> =
             (0..m * k).map(|i| ((i % 17) as f32 - 8.0) * 0.1).collect();
         let b: Vec<f32> =
@@ -2901,11 +2825,15 @@ mod tests {
         (0..m * n).fold(0.0f32, |acc, i| acc.max((got[i] - want[i]).abs()))
     }
 
-    /// `safe_matmul` must match a CPU reference for the large-K shapes that
-    /// burn-wgpu 0.21's native matmul gets wrong (K >= 512). These mirror the
-    /// projection/linear/attention contractions in PP-DocLayoutV3.
+    /// `safe_matmul` must match a CPU reference across the model's contraction
+    /// shapes.
     #[test]
     fn safe_matmul_matches_cpu_for_large_k() {
+        // `safe_matmul` only works around a wgpu-specific matmul bug, so this is
+        // only meaningful when a GPU backend is actually in use.
+        if !backend::gpu_available() {
+            return;
+        }
         for (m, k, n) in [
             (256usize, 256usize, 256usize),
             (1024, 512, 256),

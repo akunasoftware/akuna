@@ -283,7 +283,7 @@ async fn assert_model_matches_sentence_transformers_for_texts_with_prompt(
             .embed_batch_with_prompt(&texts, Some(2), prompt)
             .expect("Burn document embeddings should work"),
         ReferenceInputKind::Query => model
-            .embed_query_batch_with_prompt(&texts, Some(2), prompt)
+            .embed_batch_with_prompt(&texts, Some(2), prompt)
             .expect("Burn query embeddings should work"),
     };
     let expected = reference_embeddings(

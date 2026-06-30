@@ -6,8 +6,10 @@ use burn::tensor::{
 };
 use safetensors::{Dtype, SafeTensors};
 
+#[cfg(test)]
+use crate::detection::{Detection, RankedAlternative};
 use crate::detection::{
-    Detection, FileType, RankedAlternative,
+    FileType,
     models::magika_preprocess::{PreparedInput, prepare_input},
     vendor::{content::ContentType, model as vendor_model},
 };
@@ -95,11 +97,11 @@ const DENSE_BIAS: TensorSpec = TensorSpec {
 /// Errors raised while loading or running the Magika model.
 #[derive(Debug)]
 pub enum MagikaInferenceError {
-    /// Wrapped I/O failure (file reads, model loading).
+    /// An I/O failure.
     Io(std::io::Error),
     /// Invalid or incompatible model configuration.
     InvalidConfig(String),
-    /// Generic failure during inference or weight parsing.
+    /// A failure during inference or weight loading.
     Runtime(String),
 }
 
@@ -121,9 +123,10 @@ impl From<std::io::Error> for MagikaInferenceError {
     }
 }
 
-/// Burn-backed Magika file-type classifier.
+/// The Magika file-type classifier.
 pub struct MagikaModel<B: Backend> {
     device: B::Device,
+    #[cfg(test)]
     top_k: usize,
     embedding_weight: Vec<f32>,
     embedding_bias: Vec<f32>,
@@ -137,31 +140,22 @@ pub struct MagikaModel<B: Backend> {
     dense_bias: Tensor<B, 2>,
 }
 
-/// Per-input result of the shared classification pipeline: either a value
-/// resolved by a preprocessing rule, or a model-scored, descending-sorted list
-/// of `(label_idx, score)` pairs.
+/// Per-input classification result: either a rule-resolved type or a scored
+/// list of `(label_idx, score)` pairs.
 enum RowOutcome {
     Ruled(ContentType),
     Scored(Vec<(usize, f32)>),
 }
 
 impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
-    /// Loads the bundled embedded model weights.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the embedded model cannot be parsed.
+    /// Loads the model from its bundled weights.
     pub fn from_embedded(
         device: &B::Device,
     ) -> Result<Self, MagikaInferenceError> {
         Self::from_bytes(device, EMBEDDED_MODEL)
     }
 
-    /// Loads a model from raw ONNX bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the ONNX bytes cannot be parsed or expected weights are missing.
+    /// Loads a model from raw weight bytes.
     pub fn from_bytes(
         device: &B::Device,
         model_bytes: &[u8],
@@ -173,6 +167,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
 
         Ok(Self {
             device: (*device).clone(),
+            #[cfg(test)]
             top_k: 3,
             embedding_weight: read_tensor_spec(
                 &initializers,
@@ -195,31 +190,31 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
                 device,
                 read_conv_weight(&initializers)?,
                 [CONV_OUT_CHANNELS, CHANNELS_PER_TOKEN, CONV_KERNEL],
-            )?,
+            ),
             conv_bias: tensor_1d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &CONV_BIAS)?,
-            )?,
+            ),
             layer_norm_1_weight: tensor_2d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &LAYER_NORM_1_WEIGHT)?,
                 [1, CONV_OUT_CHANNELS],
-            )?,
+            ),
             layer_norm_1_bias: tensor_2d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &LAYER_NORM_1_BIAS)?,
                 [1, CONV_OUT_CHANNELS],
-            )?,
+            ),
             dense_weight: tensor_2d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &DENSE_WEIGHT)?,
                 [CONV_OUT_CHANNELS, DENSE_OUT],
-            )?,
+            ),
             dense_bias: tensor_2d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &DENSE_BIAS)?,
                 [1, DENSE_OUT],
-            )?,
+            ),
         })
     }
 
@@ -231,10 +226,6 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     }
 
     /// Classifies raw bytes and returns ranked alternatives.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if inference fails.
     #[cfg(test)]
     pub fn detect_bytes(
         &self,
@@ -245,10 +236,6 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     }
 
     /// Resolves a single [`FileType`] for raw bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if inference fails.
     pub fn identify_bytes(
         &self,
         bytes: &[u8],
@@ -258,11 +245,8 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         Ok(FileType::Ruled(content_type))
     }
 
-    /// Classifies a batch of inputs and returns ranked alternatives each.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any input fails inference.
+    /// Classifies a batch of inputs, returning ranked alternatives for each.
+    #[cfg(test)]
     pub fn detect_batch(
         &self,
         inputs: Vec<&[u8]>,
@@ -301,8 +285,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
             .collect()
     }
 
-    /// Runs the shared prepare -> split -> infer -> sort pipeline, returning one
-    /// [`RowOutcome`] per input in the original order.
+    /// Classifies each input, returning one [`RowOutcome`] in input order.
     fn classify(
         &self,
         inputs: Vec<&[u8]>,
@@ -353,7 +336,8 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
             .collect()
     }
 
-    /// Builds a [`Detection`] from an already-sorted `(label_idx, score)` list.
+    /// Builds a [`Detection`] from a sorted `(label_idx, score)` list.
+    #[cfg(test)]
     fn detection_from_sorted(
         &self,
         sorted: Vec<(usize, f32)>,
@@ -459,8 +443,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         Ok(softmax(logits, 1))
     }
 
-    /// Runs [`Self::forward`] over the whole batch once and splits the
-    /// `[n, DENSE_OUT]` probabilities into `n` per-input rows.
+    /// Runs the batch once and splits the probabilities into per-input rows.
     fn infer_rows(
         &self,
         batch_features: &[Vec<i32>],
@@ -491,8 +474,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     }
 }
 
-/// Validates a probability row length and returns its entries enumerated and
-/// sorted by score descending (stable comparator matching the model output).
+/// Returns a probability row's entries enumerated and sorted by score descending.
 fn sorted_row(
     row: Vec<f32>,
 ) -> Result<Vec<(usize, f32)>, MagikaInferenceError> {
@@ -514,22 +496,16 @@ fn tensor_2d_from_flat<B: Backend<FloatElem = f32>>(
     device: &B::Device,
     values: Vec<f32>,
     shape: [usize; 2],
-) -> Result<Tensor<B, 2>, MagikaInferenceError> {
-    Ok(Tensor::<B, 2>::from_data(
-        TensorData::new(values, shape),
-        device,
-    ))
+) -> Tensor<B, 2> {
+    Tensor::<B, 2>::from_data(TensorData::new(values, shape), device)
 }
 
 fn tensor_1d_from_flat<B: Backend<FloatElem = f32>>(
     device: &B::Device,
     values: Vec<f32>,
-) -> Result<Tensor<B, 1>, MagikaInferenceError> {
+) -> Tensor<B, 1> {
     let len = values.len();
-    Ok(Tensor::<B, 1>::from_data(
-        TensorData::new(values, [len]),
-        device,
-    ))
+    Tensor::<B, 1>::from_data(TensorData::new(values, [len]), device)
 }
 
 fn read_conv_weight(
@@ -557,11 +533,8 @@ fn tensor_3d_from_flat<B: Backend<FloatElem = f32>>(
     device: &B::Device,
     values: Vec<f32>,
     shape: [usize; 3],
-) -> Result<Tensor<B, 3>, MagikaInferenceError> {
-    Ok(Tensor::<B, 3>::from_data(
-        TensorData::new(values, shape),
-        device,
-    ))
+) -> Tensor<B, 3> {
+    Tensor::<B, 3>::from_data(TensorData::new(values, shape), device)
 }
 
 fn tensor_3d<B: Backend<FloatElem = f32>>(
@@ -676,6 +649,7 @@ fn label_for_index(
     )
 }
 
+#[cfg(test)]
 fn detection_for_content_type(content_type: ContentType) -> Detection {
     let alternative = alternative_for_content_type(content_type, 1.0);
 
@@ -687,6 +661,7 @@ fn detection_for_content_type(content_type: ContentType) -> Detection {
     }
 }
 
+#[cfg(test)]
 fn alternative_for_content_type(
     content_type: ContentType,
     confidence: f32,
@@ -702,15 +677,14 @@ fn alternative_for_content_type(
 
 #[cfg(test)]
 mod tests {
-    use burn_wgpu::{Wgpu, WgpuDevice};
+    use crate::ml::backend::{Backend, cpu_device};
 
     use super::MagikaModel;
 
     #[test]
     fn classifier_batch_is_deterministic() {
-        let classifier =
-            MagikaModel::<Wgpu>::from_embedded(&WgpuDevice::default())
-                .expect("build classifier");
+        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
+            .expect("build classifier");
 
         let a = classifier
             .detect_bytes(b"abcdef")
@@ -728,16 +702,15 @@ mod tests {
 
     #[test]
     fn embedded_model_builds() {
-        MagikaModel::<Wgpu>::from_embedded(&WgpuDevice::default())
+        MagikaModel::<Backend>::from_embedded(&cpu_device())
             .expect("build embedded model");
     }
 
     #[test]
     fn explicit_top_k_is_applied() {
-        let classifier =
-            MagikaModel::<Wgpu>::from_embedded(&WgpuDevice::default())
-                .expect("build model")
-                .with_top_k(5);
+        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
+            .expect("build model")
+            .with_top_k(5);
 
         let detection = classifier
             .detect_bytes(b"function greet() { return 'hi'; }")

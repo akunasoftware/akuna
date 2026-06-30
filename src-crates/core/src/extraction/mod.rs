@@ -1,9 +1,5 @@
 //! File content and metadata extraction with structured parts.
 //!
-//! Extraction reads supported files into structured parts and derived text.
-//! File type detection is ML-backed when feature `detection` is enabled, and
-//! extension-based otherwise.
-//!
 //! # Example
 //!
 //! ```rust,no_run

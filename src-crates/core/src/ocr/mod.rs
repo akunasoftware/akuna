@@ -1,21 +1,8 @@
-//! Image OCR engines and OCR-specific result geometry built with Burn.
+//! Image OCR: run text detection and recognition over page images.
 //!
-//! Runs a detector + recognizer pipeline over page images. Domain extraction
-//! structures live in [`crate::extraction`].
-//!
-//! # Models
-//!
-//! Region detection via [`OcrDetector`][crate::ocr::OcrDetector]
-//! (defaults to `PpOcrV6MediumDet`):
-//!
-//! - `PpOcrV6TinyDet` / `PpOcrV6SmallDet` / `PpOcrV6MediumDet` — PaddleOCR PP-OCRv6 detectors
-//!
-//! Text recognition via [`OcrRecognizer`][crate::ocr::OcrRecognizer]
-//! (defaults to `PpOcrV6MediumRec`):
-//!
-//! - `PpOcrV6TinyRec` / `PpOcrV6SmallRec` / `PpOcrV6MediumRec` — PaddleOCR PP-OCRv6 recognizers
-//!
-//! Any detector may be paired with any recognizer.
+//! Configure the pipeline with `OcrDetector` and `OcrRecognizer`; any
+//! detector may be paired with any recognizer. Domain extraction structures
+//! live in [`crate::extraction`].
 //!
 //! # Example
 //!
@@ -34,15 +21,12 @@ mod output;
 
 use std::path::Path;
 
-use burn::tensor::backend::Backend;
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn_dispatch::DispatchDevice;
 
 use self::models::pp_ocr::runtime::PpOcrRuntime;
+use crate::ml::backend::{self, Backend};
 pub use error::OcrError;
 pub use output::{OcrBlock, OcrBlockKind, OcrPage, OcrRect};
-
-/// Default OCR backend.
-pub(crate) type DefaultBackend = Wgpu;
 
 /// Region detection strategy.
 #[derive(
@@ -111,34 +95,27 @@ pub struct OcrOptions {
     pub cache_dir: Option<std::path::PathBuf>,
 }
 
-/// Minimal OCR interface for file and byte extraction.
-#[derive(Debug)]
-pub struct Ocr<B: Backend = DefaultBackend> {
-    model: Box<PpOcrRuntime<B>>,
-    device: B::Device,
+/// OCR engine that detects and recognizes text in page images.
+pub struct Ocr {
+    model: Box<PpOcrRuntime<Backend>>,
+    device: DispatchDevice,
 }
 
-impl Ocr<DefaultBackend> {
-    /// Loads OCR model onto default WGPU device.
+impl Ocr {
+    /// Loads OCR models from `options` onto the auto-selected device.
     pub async fn new(options: OcrOptions) -> Result<Self, OcrError> {
-        let device = WgpuDevice::default();
-        Self::new_with_device(&device, options).await
+        Self::new_on(backend::active_device(), options).await
     }
-}
 
-impl<B> Ocr<B>
-where
-    B: Backend<FloatElem = f32>,
-{
-    /// Loads OCR model onto provided device.
-    pub async fn new_with_device(
-        device: &B::Device,
+    /// Loads OCR models from `options` onto a specific device.
+    pub(crate) async fn new_on(
+        device: DispatchDevice,
         options: OcrOptions,
     ) -> Result<Self, OcrError> {
         let model = PpOcrRuntime::load(
             options.detector,
             options.recognizer,
-            device,
+            &device,
             options.cache_dir,
         )
         .await
@@ -146,7 +123,7 @@ where
 
         Ok(Self {
             model: Box::new(model),
-            device: device.clone(),
+            device,
         })
     }
 
@@ -177,7 +154,7 @@ where
             .map_err(|source| OcrError::Inference { source })
     }
 
-    /// Returns configured detector and recognizer.
+    /// Returns the configured detector and recognizer.
     pub fn pipeline(&self) -> (OcrDetector, OcrRecognizer) {
         (self.model.detector, self.model.recognizer)
     }

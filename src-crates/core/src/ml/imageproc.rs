@@ -1,31 +1,12 @@
-//! Image preprocessing that matches OpenCV (`cv2`) byte-for-byte, so our
-//! detection/layout inputs are identical to the PaddleOCR/PaddleX references
-//! (which resize with `cv2.resize(..., INTER_LINEAR/INTER_CUBIC)`).
-//!
-//! Both use half-pixel-center coordinate mapping `src = (dst + 0.5) * scale -
-//! 0.5` with `INTER_RESIZE_COEF_BITS = 11` (weight scale `2048`).
-//!
-//! `INTER_LINEAR` on `uint8` is *not* the naive `>> 22` fixed-point bilinear:
-//! cv2 runs its SIMD `VResizeLinearVec_32s8u` (SSE/NEON, which produce identical
-//! results) for the vertical pass, which is deliberately lower precision —
-//! horizontal stays full-precision int (`src*alpha`), then vertical does
-//! `row >> 4`, `mulhi16(_, beta)` (i.e. `(a*b) >> 16`), a saturating add, and a
-//! final `(t + 2) >> 2`. Reproducing that exactly (see [`resize_linear_cv2`]) is
-//! what makes us byte-identical to the reference; the naive scalar bilinear is
-//! off by ±1 on ~0.5% of pixels. `INTER_CUBIC` does use the straightforward
-//! fixed-point 4-tap (`>> 22` with rounding).
-//!
-//! `image`'s `FilterType::Triangle` differs from all of this (it scales the
-//! kernel by the resize ratio, behaving like area-averaging on downscale),
-//! which is why it must not be used where parity with cv2 matters.
+//! Image resizing that matches OpenCV (`cv2.resize`) byte-for-byte, so
+//! detection/layout inputs are identical to the PaddleOCR/PaddleX references.
 
 use image::{DynamicImage, RgbImage};
 
 const COEF_BITS: u32 = 11;
 const COEF_SCALE: i64 = 1 << COEF_BITS; // 2048
 
-/// Per-output-pixel bilinear taps: `(src0, src1, w0, w1)` at 2048-scale, each
-/// weight rounded independently (so `w0 + w1` is not forced to 2048).
+/// Per-output-pixel bilinear taps: `(src0, src1, w0, w1)` at 2048-scale.
 fn linear_coeffs(dst: usize, src: usize) -> Vec<(usize, usize, i64, i64)> {
     let scale = src as f64 / dst as f64;
     let coef = COEF_SCALE as f32;
@@ -54,17 +35,13 @@ fn linear_coeffs(dst: usize, src: usize) -> Vec<(usize, usize, i64, i64)> {
         .collect()
 }
 
-/// Saturating cast to the `i16` range (cv2's `_mm_packs_epi32` / NEON `vqmovn`).
+/// Saturating cast to the `i16` range.
 fn sat16(value: i32) -> i32 {
     value.clamp(-32768, 32767)
 }
 
-/// Resizes `image` to `dst_w x dst_h` reproducing `cv2.resize(INTER_LINEAR)`
+/// Resizes `image` to `dst_w x dst_h`, matching `cv2.resize(INTER_LINEAR)`
 /// byte-for-byte on the RGB8 channels.
-///
-/// This mirrors cv2's two-pass SIMD pipeline exactly (see module docs): a
-/// full-precision integer horizontal pass into `hbuf` (2048-scale), then the
-/// lower-precision `VResizeLinearVec_32s8u` vertical pass.
 pub(crate) fn resize_linear_cv2(
     image: &DynamicImage,
     dst_w: usize,

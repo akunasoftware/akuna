@@ -457,9 +457,6 @@ fn validate_graph_identifier(
 }
 
 /// Embeds search text for graph node indexing and querying.
-///
-/// Blocking embed call is wrapped in [`tokio::task::spawn_blocking`] to avoid
-/// stalling the tokio worker on Burn forward passes.
 #[cfg(not(test))]
 async fn embed_search_text(text: &str) -> Result<Vec<f32>, ServiceError> {
     use tokio::sync::OnceCell;

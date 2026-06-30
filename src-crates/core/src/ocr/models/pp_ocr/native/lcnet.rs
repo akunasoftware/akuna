@@ -1,5 +1,4 @@
-//! Shared LCNetV4 building blocks used by both the native PP-OCRv6 detector and
-//! recognizer backbones.
+//! Shared backbone building blocks for the PP-OCRv6 detector and recognizer.
 
 use anyhow::Result;
 use burn::nn::PaddingConfig2d;
@@ -9,14 +8,13 @@ use safetensors::SafeTensors;
 
 use crate::ml::burn_nn::{Activation, ConvGeom, ConvLayer};
 
-/// Backbone SE gate (`clamp(x/6 + 0.5, 0, 1)`).
+/// Backbone squeeze-excitation gate activation.
 pub(super) const BACKBONE_GATE: Activation = Activation::HardSigmoid {
     alpha: 0.166_666_701_436_042_79,
     beta: 0.5,
 };
 
-/// Squeeze-excitation gate: GAP -> reduce(ReLU) -> expand(gate activation).
-/// Returns the per-channel gate `[B, C, 1, 1]`.
+/// Squeeze-excitation channel gate.
 #[derive(Debug)]
 pub(super) struct SqueezeExcite<B: Backend> {
     reduce: ConvLayer<B>,
@@ -69,15 +67,12 @@ pub(super) struct BlockSpec {
     pub token_ch: usize,
     pub hidden: usize,
     pub out_ch: usize,
-    /// `None` for normal blocks; `Some(stride)` for downsample blocks (which
-    /// use a conv+BN token conv and have no residual).
+    /// `Some(stride)` marks a downsample block; `None` for normal blocks.
     pub downsample_stride: Option<[usize; 2]>,
     pub se_reduced: Option<usize>,
 }
 
-/// One LCNetV4 block: depthwise token mix (+ optional SE) then a 1x1 channel
-/// MLP (expand-GELU / project). Residual wraps only the channel MLP and is
-/// omitted on downsample blocks.
+/// One backbone block.
 #[derive(Debug)]
 pub(super) struct LcnetBlock<B: Backend> {
     token_conv: ConvLayer<B>,

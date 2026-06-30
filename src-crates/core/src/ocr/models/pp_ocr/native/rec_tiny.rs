@@ -1,5 +1,4 @@
-//! Native PP-OCRv6 **tiny** text recognizer. Unlike small/medium it has a
-//! simple 2-conv stem and a conv-only CTC head (no SVTR / attention).
+//! PP-OCRv6 text recognizer for the tiny tier.
 
 use anyhow::Result;
 use burn::nn::PaddingConfig2d;

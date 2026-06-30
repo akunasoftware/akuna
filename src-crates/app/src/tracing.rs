@@ -8,11 +8,7 @@ const DEFAULT_LOG_LEVEL: &str = "warn";
 pub(crate) const LOG_LEVELS: [&str; 5] =
     ["trace", "debug", "info", "warn", "error"];
 
-/// Initializes application tracing.
-///
-/// When `RUST_LOG` is set, that filter is honored verbatim. Otherwise the
-/// provided `app_name` is enabled at the requested `log_level` (defaulting
-/// to the built-in default level).
+/// Initializes application tracing for `app_name` at the given log level.
 pub(crate) fn setup_tracing(app_name: &str, log_level: Option<&str>) {
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
