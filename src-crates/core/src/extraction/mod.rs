@@ -18,8 +18,6 @@ mod metadata;
 mod parts;
 mod pipeline;
 mod provenance;
-#[cfg(test)]
-mod tests;
 mod types;
 
 pub use errors::FileExtractionError;

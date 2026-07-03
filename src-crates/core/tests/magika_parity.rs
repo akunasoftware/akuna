@@ -26,15 +26,17 @@ fn parity_against_rust_magika_on_repo_fixtures() {
 }
 
 fn assert_parity_against_rust_magika(session: &Session) {
-    let fixture_files = common::fixture_files();
+    let fixtures = common::get_corpus_files(None)
+        .expect("Failed retrieving corpus fixture set");
 
     let mut rust_magika =
         magika::Session::new().expect("build rust magika session");
-    let expected = fixture_files
+    let expected = fixtures
         .iter()
-        .map(|path| {
+        .map(|fixture| {
+            let path = fixture.get().expect("Failed to retrieve fixture path");
             let detection =
-                rust_magika.identify_file_sync(path).unwrap_or_else(|err| {
+                rust_magika.identify_file_sync(&path).unwrap_or_else(|err| {
                     panic!("rust magika failed for {path:?}: {err}")
                 });
             (
@@ -45,10 +47,11 @@ fn assert_parity_against_rust_magika(session: &Session) {
         })
         .collect::<Vec<_>>();
 
-    let actual = fixture_files
+    let actual = fixtures
         .iter()
-        .map(|path| {
-            let bytes = fs::read(path)
+        .map(|fixture| {
+            let path = fixture.get().expect("Failed to retrieve fixture path");
+            let bytes = fs::read(&path)
                 .unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"));
             let info = session
                 .identify_content_sync(&bytes)

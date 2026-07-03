@@ -121,3 +121,4 @@ magika = "1.1.0"
 # `download-binaries` feature so the ONNX Runtime library is fetched at build
 # time (otherwise magika fails to link).
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["download-binaries", "tls-rustls"] }
+regex = "1.12.4"

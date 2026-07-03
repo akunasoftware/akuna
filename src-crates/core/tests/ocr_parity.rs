@@ -17,6 +17,8 @@ use anyhow::{Context, Result, bail};
 
 use akuna_core::ocr::{Ocr, OcrDetector, OcrOptions, OcrRecognizer};
 
+use crate::common::CorpusFixture;
+
 /// Reference block emitted by `scripts/reference_ocr.py`.
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
@@ -34,7 +36,7 @@ fn parity_pp_ocr_v6_tiny_matches_paddleocr() {
             OcrDetector::PpOcrV6TinyDet,
             OcrRecognizer::PpOcrV6TinyRec,
             "tiny",
-            "text-hidpi.png",
+            &CorpusFixture::new("content/fixtures/text-hidpi.png"),
         )
     });
     if let Err(error) = result {
@@ -51,7 +53,7 @@ fn parity_pp_ocr_v6_small_matches_paddleocr() {
             OcrDetector::PpOcrV6SmallDet,
             OcrRecognizer::PpOcrV6SmallRec,
             "small",
-            "text-hidpi.png",
+            &CorpusFixture::new("content/fixtures/text-hidpi.png"),
         )
     });
     if let Err(error) = result {
@@ -68,7 +70,7 @@ fn parity_pp_ocr_v6_medium_matches_paddleocr() {
             OcrDetector::PpOcrV6MediumDet,
             OcrRecognizer::PpOcrV6MediumRec,
             "medium",
-            "text-hidpi.png",
+            &CorpusFixture::new("content/fixtures/text-hidpi.png"),
         )
     });
     if let Err(error) = result {
@@ -87,12 +89,12 @@ fn text_parity(
     detector: OcrDetector,
     recognizer: OcrRecognizer,
     tier: &str,
-    fixture: &str,
+    fixture: &CorpusFixture,
 ) -> Result<()> {
     let runtime =
         tokio::runtime::Runtime::new().context("tokio runtime should start")?;
     runtime.block_on(async {
-        let image = common::fixture_path(fixture);
+        let image_path = fixture.get()?;
 
         let ocr = Ocr::new(OcrOptions {
             detector,
@@ -103,7 +105,7 @@ fn text_parity(
         .context("ocr model should load")?;
 
         let page = ocr
-            .extract_page_file(&image)
+            .extract_page_file(&image_path)
             .context("ocr extraction should succeed")?;
 
         let actual: Vec<String> =
@@ -112,7 +114,7 @@ fn text_parity(
             "reference_ocr.py",
             &[
                 "--image",
-                image.to_str().context("non-utf8 fixture path")?,
+                image_path.to_str().context("non-utf8 fixture path")?,
                 "--tier",
                 tier,
             ],

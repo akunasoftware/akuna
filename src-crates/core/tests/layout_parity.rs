@@ -21,6 +21,8 @@ use serde::Deserialize;
 
 use akuna_core::layout::{LayoutDetector, LayoutOptions};
 
+use crate::common::CorpusFixture;
+
 /// Reference block emitted by `scripts/reference_layout.py`.
 #[derive(Debug, Deserialize)]
 struct ReferenceBlock {
@@ -74,11 +76,12 @@ fn reference_blocks(image: &std::path::Path) -> Result<Vec<ReferenceBlock>> {
 /// - Count as matched if IoU ≥ [`IOU_THRESHOLD`]
 /// - Allow up to [`UNMATCHED_TOLERANCE`] × max(actual, expected) unmatched
 ///   on each side (covers NMS / threshold drift between runtimes)
-fn layout_parity(fixture: &str) -> Result<()> {
+fn layout_parity(fixture: CorpusFixture) -> Result<()> {
     let runtime =
         tokio::runtime::Runtime::new().context("tokio runtime should start")?;
+
     runtime.block_on(async {
-        let image_path = common::fixture_path(fixture);
+        let image_path = fixture.get()?;
         let image = image::open(&image_path).with_context(|| {
             format!("failed to open fixture {}", image_path.display())
         })?;
@@ -115,6 +118,7 @@ fn layout_parity(fixture: &str) -> Result<()> {
         let label_set_diff: Vec<&&str> = actual_labels
             .symmetric_difference(&expected_labels)
             .collect();
+
         if !label_set_diff.is_empty() {
             bail!(
                 "layout label set mismatch for {fixture}\n\
@@ -171,7 +175,9 @@ fn layout_parity(fixture: &str) -> Result<()> {
 #[test]
 #[ignore = "downloads model and runs Python PaddleX reference"]
 fn parity_pp_doclayout_v3_matches_paddlex() {
-    let result = run_with_model_stack(|| layout_parity("text-hidpi.png"));
+    let result = run_with_model_stack(|| {
+        layout_parity(CorpusFixture::new("content/fixtures/text-hidpi.png"))
+    });
     if let Err(error) = result {
         eprintln!("PP-DocLayoutV3 parity failed: {error:?}");
         std::process::exit(1);

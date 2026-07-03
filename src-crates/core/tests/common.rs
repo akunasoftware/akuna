@@ -9,61 +9,21 @@
 
 #![allow(dead_code)]
 
-use std::fs;
+use std::fmt::{self, Display};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context, Result};
+use regex::Regex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-
-/// Resolves a fixture at `<manifest>/../../../test-corpus/content/fixtures/<name>`.
-///
-/// The test corpus lives as a sibling of the akuna repo, so three levels up
-/// from the core crate manifest lands at the shared workspace root.
-pub fn fixture_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../test-corpus/content/fixtures")
-        .join(name)
-}
 
 /// Resolves a reference script at `<manifest>/../../scripts/<name>`.
 pub fn script_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../scripts")
         .join(name)
-}
-
-/// Magika fixture directory at `<workspace>/target/fixtures`.
-pub fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../target/fixtures")
-}
-
-/// Sorted fixture file paths under [`fixture_dir`].
-///
-/// # Panics
-///
-/// Panics if the directory cannot be read or contains no files.
-pub fn fixture_files() -> Vec<PathBuf> {
-    let root = fixture_dir();
-    let mut files = fs::read_dir(&root)
-        .unwrap_or_else(|err| {
-            panic!("failed to read fixtures directory {root:?}: {err}")
-        })
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect::<Vec<_>>();
-
-    files.sort();
-    assert!(
-        !files.is_empty(),
-        "expected at least one fixture file in the shared test corpus at {}",
-        root.display()
-    );
-
-    files
 }
 
 /// Spawns `uv run <script_rel> <args>`, writes `input` as JSON on stdin, and
@@ -201,4 +161,63 @@ pub fn similarity(a: &str, b: &str) -> f64 {
         return 1.0;
     }
     1.0 - (levenshtein(a, b) as f64 / max_len as f64)
+}
+
+const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
+const HF_REPO_CONTENT_PREFIX: &str = "content/";
+
+/// A struct representing a test fixture file stored on huggingface
+#[derive(Debug)]
+pub struct CorpusFixture {
+    /// String representing relative file path within HF repo
+    repo_file_path: String,
+}
+
+impl CorpusFixture {
+    /// Initialise a fixture by literal repo file path
+    pub fn new(repo_file_path: &str) -> Self {
+        Self {
+            repo_file_path: repo_file_path.to_string(),
+        }
+    }
+
+    /// Provides a local path to a downloaded/cached test fixture
+    pub fn get(&self) -> anyhow::Result<PathBuf> {
+        let client = hf_hub::api::sync::Api::new()?;
+        let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
+        Ok(repo.download(&self.repo_file_path)?)
+    }
+}
+
+impl Display for CorpusFixture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.repo_file_path)
+    }
+}
+
+/// Get a list of all available corpus fixture files, with optional path filtering
+pub fn get_corpus_files(
+    regex_filter: Option<&str>,
+) -> anyhow::Result<Vec<CorpusFixture>> {
+    let client = hf_hub::api::sync::Api::new()?;
+    let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
+    let info = repo.info()?;
+
+    let pattern = match regex_filter {
+        Some(path) => format!("^{HF_REPO_CONTENT_PREFIX}{path}"),
+        None => format!("^{HF_REPO_CONTENT_PREFIX}"),
+    };
+    let pattern = Regex::new(&pattern)?;
+
+    let fixtures: Vec<_> = info
+        .siblings
+        .into_iter()
+        .map(|sibling| sibling.rfilename)
+        .filter(|filename| pattern.is_match(filename))
+        .map(|file_name| CorpusFixture {
+            repo_file_path: file_name,
+        })
+        .collect();
+
+    Ok(fixtures)
 }

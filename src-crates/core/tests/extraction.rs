@@ -1,11 +1,20 @@
-use super::*;
+//! Extraction tests confirming expected text content is retrieved
+//! from all fixture files containing known text
+#![cfg(feature = "extraction")]
 
+#[path = "common.rs"]
+mod common;
+
+use crate::common::CorpusFixture;
+use akuna_core::extraction::{
+    ExtractionConfig, FileExtractionError, PartKind, document,
+};
 use std::path::PathBuf;
 
 fn get_extraction_fixture(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../test-corpus/content/fixtures")
-        .join(name)
+    CorpusFixture::new(format!("content/fixtures/{name}").as_str())
+        .get()
+        .expect("Could not fetch {name} in corpus fixtures")
 }
 
 async fn assert_extracts_text(
@@ -226,12 +235,6 @@ async fn returns_parts_for_syntax_text_fixtures()
 #[cfg(feature = "ocr")]
 #[test]
 fn extracts_png_with_ocr() {
-    // OCR runs a CNN detector + transformer recognizer; on the ndarray CPU
-    // backend in debug builds that is far too slow for CI. This end-to-end
-    // check therefore runs only when a GPU device is available.
-    if !crate::ml::backend::gpu_available() {
-        return;
-    }
     let handle = std::thread::Builder::new()
         .stack_size(128 * 1024 * 1024)
         .spawn(|| {

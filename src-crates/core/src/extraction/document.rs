@@ -234,13 +234,19 @@ fn unique_suffix() -> u128 {
 fn validate_path(file_path: &Path) -> Result<(), FileExtractionError> {
     if !file_path.exists() {
         return Err(FileExtractionError::Io {
-            source: std::io::Error::other("Given path does not exist"),
+            source: std::io::Error::other(format!(
+                "Given path does not exist: {}",
+                file_path.to_string_lossy()
+            )),
         });
     }
 
     if !file_path.is_file() {
         return Err(FileExtractionError::Io {
-            source: std::io::Error::other("Given path is not a file"),
+            source: std::io::Error::other(format!(
+                "Given path is not a file: {}",
+                file_path.to_string_lossy()
+            )),
         });
     }
 
