@@ -84,15 +84,6 @@ impl From<office_oxide::OfficeError> for FileExtractionError {
     }
 }
 
-impl From<omniparse::Error> for FileExtractionError {
-    fn from(source: omniparse::Error) -> Self {
-        Self::ExtractionEngine {
-            engine: "omniparse",
-            source: Box::new(source),
-        }
-    }
-}
-
 impl From<rbook::ebook::errors::EbookError> for FileExtractionError {
     fn from(source: rbook::ebook::errors::EbookError) -> Self {
         Self::ExtractionEngine {

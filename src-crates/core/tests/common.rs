@@ -19,6 +19,36 @@ use regex::Regex;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
+const HF_REPO_CONTENT_PREFIX: &str = "content/";
+
+/// A struct representing a test fixture file stored on huggingface
+#[derive(Debug)]
+pub struct CorpusFixture {
+    /// String representing relative file path within HF repo
+    repo_file_path: String,
+}
+
+impl CorpusFixture {
+    /// Initialise a fixture by literal repo file path
+    pub fn new(repo_file_path: &str) -> Self {
+        Self {
+            repo_file_path: repo_file_path.to_string(),
+        }
+    }
+
+    /// Provides a local path to a downloaded/cached test fixture
+    pub fn get(&self) -> anyhow::Result<PathBuf> {
+        Ok(get_corpus_repo()?.download(&self.repo_file_path)?)
+    }
+}
+
+impl Display for CorpusFixture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.repo_file_path)
+    }
+}
+
 /// Resolves a reference script at `<manifest>/../../scripts/<name>`.
 pub fn script_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -163,44 +193,18 @@ pub fn similarity(a: &str, b: &str) -> f64 {
     1.0 - (levenshtein(a, b) as f64 / max_len as f64)
 }
 
-const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
-const HF_REPO_CONTENT_PREFIX: &str = "content/";
-
-/// A struct representing a test fixture file stored on huggingface
-#[derive(Debug)]
-pub struct CorpusFixture {
-    /// String representing relative file path within HF repo
-    repo_file_path: String,
-}
-
-impl CorpusFixture {
-    /// Initialise a fixture by literal repo file path
-    pub fn new(repo_file_path: &str) -> Self {
-        Self {
-            repo_file_path: repo_file_path.to_string(),
-        }
-    }
-
-    /// Provides a local path to a downloaded/cached test fixture
-    pub fn get(&self) -> anyhow::Result<PathBuf> {
-        let client = hf_hub::api::sync::Api::new()?;
-        let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
-        Ok(repo.download(&self.repo_file_path)?)
-    }
-}
-
-impl Display for CorpusFixture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.repo_file_path)
-    }
+fn get_corpus_repo() -> Result<hf_hub::api::sync::ApiRepo> {
+    let client = hf_hub::api::sync::ApiBuilder::new()
+        .with_progress(false)
+        .build()?;
+    Ok(client.dataset(HF_REPO_TEST_CORPUS.into()))
 }
 
 /// Get a list of all available corpus fixture files, with optional path filtering
 pub fn get_corpus_files(
     regex_filter: Option<&str>,
 ) -> anyhow::Result<Vec<CorpusFixture>> {
-    let client = hf_hub::api::sync::Api::new()?;
-    let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
+    let repo = get_corpus_repo()?;
     let info = repo.info()?;
 
     let pattern = match regex_filter {

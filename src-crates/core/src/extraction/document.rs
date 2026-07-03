@@ -123,10 +123,8 @@ async fn extract_content(
         | "application/xml"
         | "text/html"
         | "text/markdown"
-        | "text/xml" => {
-            extractors::text::extract_bytes_with_omniparse(metadata, bytes)
-                .map(|text| content_from_text(text, metadata))
-        }
+        | "text/xml" => extractors::text::extract_bytes(metadata, bytes)
+            .map(|text| content_from_text(text, metadata)),
 
         // Known archive formats are not treated as text fallbacks.
         "application/zip" | "application/vnd.oasis.opendocument.text" => {
@@ -143,7 +141,7 @@ async fn extract_content(
 
         // Remaining detected text goes through generic parser fallback.
         _ if metadata.is_text => {
-            extractors::text::extract_bytes_with_omniparse(metadata, bytes)
+            extractors::text::extract_bytes(metadata, bytes)
                 .map(|text| content_from_text(text, metadata))
         }
 
