@@ -1,13 +1,4 @@
-//! Build-time conversion of the vendored magika weights.
-//!
-//! The upstream magika model ships as `model.onnx` (committed under
-//! `src/detection/vendor/assets/models/standard_v3_3/`). At build time — only
-//! when the `detection` feature is enabled — we extract its float initializers
-//! and repackage them as `OUT_DIR/magika.safetensors`, which
-//! `detection::models::magika` then `include_bytes!`s. This keeps the runtime
-//! model on the lean safetensors loader while the derived safetensors is never
-//! committed (and nothing is fetched from the network, so it works in sandboxed
-//! builds such as Nix).
+//! Build support for bundled detection assets.
 
 use std::env;
 use std::fs;
@@ -17,12 +8,12 @@ use onnx_ir::ModelProto;
 use protobuf::Message;
 use safetensors::tensor::{Dtype, TensorView, serialize_to_file};
 
-/// Output safetensors file name (under `OUT_DIR`).
+// Output safetensors file name.
 const MAGIKA_OUT: &str = "magika.safetensors";
-/// Committed upstream ONNX weights, relative to `CARGO_MANIFEST_DIR`.
+// Committed upstream ONNX weights, relative to `CARGO_MANIFEST_DIR`.
 const MAGIKA_ONNX: &str =
     "src/detection/vendor/assets/models/standard_v3_3/model.onnx";
-/// ONNX `TensorProto` `data_type` for IEEE-754 single-precision float.
+// ONNX `TensorProto` `data_type` for IEEE-754 single-precision float.
 const ONNX_DTYPE_FLOAT: i32 = 1;
 
 fn main() {
@@ -45,9 +36,7 @@ fn main() {
     convert_onnx_to_safetensors(&onnx_bytes, &dest);
 }
 
-/// Parses the ONNX model and writes every float initializer to a safetensors
-/// file at `dest`, preserving each tensor's name and shape so the runtime
-/// loader can read them back by name.
+// Converts detection weights to safetensors.
 fn convert_onnx_to_safetensors(onnx_bytes: &[u8], dest: &Path) {
     let model = ModelProto::parse_from_bytes(onnx_bytes)
         .unwrap_or_else(|e| panic!("parse magika onnx: {e}"));

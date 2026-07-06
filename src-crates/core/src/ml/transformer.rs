@@ -11,9 +11,7 @@ use crate::ml::safe_matmul;
 /// Mask fill value used for padded positions.
 const MASK_FILL: f32 = -1.0e4;
 
-/// Weight-key remap patterns mapping a Hugging Face BERT encoder onto
-/// [`BertEncoder`]'s module layout. Callers prepend their model's prefix rules
-/// (e.g. stripping `bert.`/`roberta.`) and append the embeddings LayerNorm rule.
+/// Shared BERT encoder weight remap rules.
 pub(crate) fn bert_encoder_remap() -> Vec<(&'static str, &'static str)> {
     vec![
         ("encoder\\.layer\\.([0-9]+)", "encoder.layers.$1"),

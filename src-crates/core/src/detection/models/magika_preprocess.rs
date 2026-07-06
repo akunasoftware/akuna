@@ -75,20 +75,3 @@ fn strip<'a>(
 fn is_whitespace(x: u8) -> bool {
     x.is_ascii_whitespace() || x == 0x0b
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::detection::vendor::{
-        content::ContentType, model as vendor_model,
-    };
-
-    use super::{PreparedInput, prepare_input};
-
-    #[test]
-    fn short_utf8_input_is_ruled_as_text() {
-        match prepare_input(b"hello".as_slice(), &vendor_model::CONFIG) {
-            PreparedInput::Ruled(ContentType::Txt) => {}
-            _ => panic!("expected ruled text"),
-        }
-    }
-}

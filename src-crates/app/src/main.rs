@@ -1,18 +1,16 @@
-//! Command-line interface for knowledge tools: extraction, schema generation,
-//! and the local REST API server.
+//! Command-line interface for knowledge tools.
 //!
 //! # Example
 //!
 //! ```text
-//! akuna --help
-//! akuna extract ./notes.md --metadata --text
-//! akuna serve
+//! <app> --help
+//! <app> extract ./notes.md --metadata --text
 //! ```
 
-mod api;
 mod cli;
 mod tracing;
 
+pub(crate) use akuna_core::PACKAGE_NAME as APP_NAME;
 use anyhow::Result;
 use serde::Serialize;
 

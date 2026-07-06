@@ -1,0 +1,25 @@
+[package]
+name = "akuna-ffi"
+description = "Foreign language bindings for the core knowledge tooling library."
+authors.workspace = true
+repository.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+bench = false
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+akuna-core = { workspace = true, features = ["full"] }
+thiserror.workspace = true
+tokio.workspace = true
+uniffi = { version = "0.32.0", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+uniffi_bindgen = { version = "0.32.0", default-features = false, features = ["cargo-metadata"] }

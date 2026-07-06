@@ -16,8 +16,8 @@ use burn_store::{
 use serde::Deserialize;
 use tokenizers::{Tokenizer, TruncationParams};
 
+use crate::ml::text::{HfModelFiles, cls_pooling, download_hf_model_files};
 use crate::ml::transformer::{BertEncoder, EncoderConfig, bert_encoder_remap};
-use crate::ml::{HfModelFiles, cls_pooling, download_hf_model_files};
 
 /// How a sequence's token hidden states collapse to one embedding vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,27 +38,6 @@ struct BertConfig {
     max_position_embeddings: usize,
     type_vocab_size: usize,
     layer_norm_eps: f64,
-}
-
-/// Subset of `sentence_bert_config.json` read by this crate.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct SentenceBertConfig {
-    max_seq_length: Option<usize>,
-}
-
-impl SentenceBertConfig {
-    /// Reads a `sentence_bert_config.json` file from disk.
-    pub(crate) fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        crate::ml::load_json_config(
-            path.as_ref(),
-            "sentence-transformers config",
-        )
-    }
-
-    /// Configured maximum sequence length, if set.
-    pub(crate) fn max_seq_length(&self) -> Option<usize> {
-        self.max_seq_length
-    }
 }
 
 #[derive(Debug)]
@@ -92,7 +71,7 @@ pub(crate) struct BertEmbeddingModel<B: Backend> {
 impl BertConfig {
     /// Reads a BERT `config.json` file from disk.
     pub fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        crate::ml::load_json_config(path.as_ref(), "embedding config")
+        crate::ml::text::load_json_config(path.as_ref(), "embedding config")
     }
 
     /// Initializes a BERT model with this config on `device`.
@@ -239,11 +218,12 @@ pub(crate) fn prompt_sentences<'a>(
         .collect()
 }
 
-/// Loads a pretrained BERT-family embedding model from Hugging Face.
+/// Loads a BERT-family embedding model.
 pub(crate) async fn load_pretrained_bert_embedding<B>(
     device: &B::Device,
     repo_id: &str,
     pooling: PoolingStrategy,
+    max_length: Option<usize>,
     cache_dir: Option<PathBuf>,
 ) -> Result<BertEmbeddingModel<B>>
 where
@@ -261,11 +241,9 @@ where
                 files.tokenizer_path.display()
             )
         })?;
-    let max_length = sentence_transformers_max_length(
-        files.sentence_bert_config_path.as_deref(),
-    )?
-    .unwrap_or(config.max_position_embeddings)
-    .min(config.max_position_embeddings);
+    let max_length = max_length
+        .unwrap_or(config.max_position_embeddings)
+        .min(config.max_position_embeddings);
     tokenizer
         .with_truncation(Some(TruncationParams {
             max_length,
@@ -281,7 +259,7 @@ where
     })
 }
 
-/// Downloads config, weights, and tokenizer for a Hugging Face model.
+/// Resolves default BERT-family model assets.
 pub(crate) async fn download_hf_model(
     repo_id: &str,
     cache_dir: Option<PathBuf>,
@@ -290,7 +268,7 @@ pub(crate) async fn download_hf_model(
         .await
 }
 
-/// Downloads config, weights, and tokenizer using a custom weights file name.
+/// Resolves BERT-family model assets.
 pub(crate) async fn download_hf_model_with_weights(
     repo_id: &str,
     weights_file: &str,
@@ -298,15 +276,6 @@ pub(crate) async fn download_hf_model_with_weights(
 ) -> Result<HfModelFiles> {
     download_hf_model_files(repo_id, weights_file, cache_dir, "embedding model")
         .await
-}
-
-/// Reads `max_seq_length` from an optional `sentence_bert_config.json`.
-pub(crate) fn sentence_transformers_max_length(
-    path: Option<&Path>,
-) -> Result<Option<usize>> {
-    path.map(SentenceBertConfig::load_from_hf)
-        .transpose()
-        .map(|config| config.and_then(|config| config.max_seq_length()))
 }
 
 fn load_pretrained_weights<B: Backend>(

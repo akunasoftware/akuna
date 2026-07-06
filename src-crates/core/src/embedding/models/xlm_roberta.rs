@@ -15,9 +15,8 @@ use tokenizers::{Tokenizer, TruncationParams};
 
 use crate::embedding::models::bert::{
     download_hf_model_with_weights, normalize_l2, prompt_sentences,
-    sentence_transformers_max_length,
 };
-use crate::ml::cls_pooling;
+use crate::ml::text::{cls_pooling, xlm_roberta_position_ids};
 
 type TokenizedPairs<B> = (Tensor<B, 2, Int>, Tensor<B, 2>, Tensor<B, 2, Int>);
 
@@ -67,7 +66,7 @@ pub(crate) struct XlmRobertaEmbeddingModel<B: Backend> {
 
 impl XlmRobertaConfig {
     fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        crate::ml::load_json_config(path.as_ref(), "embedding config")
+        crate::ml::text::load_json_config(path.as_ref(), "embedding config")
     }
 
     fn init<B: Backend>(&self, device: &B::Device) -> XlmRobertaModel<B> {
@@ -187,7 +186,7 @@ where
     }
 }
 
-/// Loads a pretrained XLM-RoBERTa embedding model from Hugging Face.
+/// Loads an XLM-RoBERTa embedding model.
 pub(crate) async fn load_pretrained_xlm_roberta_embedding<B>(
     device: &B::Device,
     repo_id: &str,
@@ -210,11 +209,7 @@ where
                 files.tokenizer_path.display()
             )
         })?;
-    let max_length = sentence_transformers_max_length(
-        files.sentence_bert_config_path.as_deref(),
-    )?
-    .unwrap_or(config.max_position_embeddings)
-    .min(config.max_position_embeddings.saturating_sub(2));
+    let max_length = config.max_position_embeddings.saturating_sub(2);
     tokenizer
         .with_truncation(Some(TruncationParams {
             max_length,
@@ -277,23 +272,23 @@ fn tokenize_batch<B: Backend>(
     let batch_size = sentences.len();
     let mut input_ids = vec![pad_token_id; batch_size * max_len];
     let mut attention_mask = vec![0.0f32; batch_size * max_len];
-    let mut position_ids = vec![pad_token_id; batch_size * max_len];
 
     for (batch_index, encoding) in encodings.iter().enumerate() {
-        let mut position_id = pad_token_id + 1;
         for token_index in 0..encoding.get_ids().len().min(max_len) {
             let offset = batch_index * max_len + token_index;
             let token_id = encoding.get_ids()[token_index] as i32;
             let mask = encoding.get_attention_mask()[token_index] as f32;
             input_ids[offset] = token_id;
             attention_mask[offset] = mask;
-            if mask > 0.0 {
-                position_ids[offset] = position_id;
-                position_id += 1;
-            }
         }
     }
 
+    let position_ids = xlm_roberta_position_ids(
+        &attention_mask,
+        batch_size,
+        max_len,
+        pad_token_id,
+    );
     let input_ids =
         Tensor::<B, 1, Int>::from_ints(input_ids.as_slice(), device)
             .reshape([batch_size, max_len]);

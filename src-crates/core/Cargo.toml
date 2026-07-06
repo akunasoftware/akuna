@@ -1,17 +1,16 @@
 [package]
 name = "akuna-core"
-description = "Knowledge tooling library for extraction, embedding, reranking, and graph storage."
+description = "Knowledge tooling library for extraction, embedding, and reranking."
 authors.workspace = true
 repository.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-readme = "README.md"
 
 [lib]
 bench = false
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [lints]
 workspace = true
@@ -22,21 +21,17 @@ full = [
   "detection",
   "embedding",
   "extraction",
-  "layout",
-  "reranking",
-  "storage",
-  "ocr"
+  "ocr",
+  "reranking"
 ]
 
 # Module features
 detection = ["ml", "dep:safetensors"]
 embedding = ["ml", "dep:tokenizers"]
-extraction = ["detection", "dep:tokio", "dep:pdf_oxide", "dep:office_oxide", "dep:rbook", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-c", "dep:tree-sitter-c-sharp", "dep:tree-sitter-containerfile", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-dart", "dep:tree-sitter-go", "dep:tree-sitter-graphql", "dep:tree-sitter-groovy", "dep:tree-sitter-hcl", "dep:tree-sitter-html", "dep:tree-sitter-java", "dep:tree-sitter-javascript", "dep:tree-sitter-json", "dep:tree-sitter-lua", "dep:tree-sitter-md", "dep:tree-sitter-php", "dep:tree-sitter-python", "dep:tree-sitter-ruby", "dep:tree-sitter-rust", "dep:tree-sitter-scala", "dep:tree-sitter-scss", "dep:tree-sitter-sequel", "dep:tree-sitter-svelte-next", "dep:tree-sitter-swift", "dep:tree-sitter-typescript", "dep:tree-sitter-vue-updated", "dep:tree-sitter-yaml"]
-layout = ["ml", "dep:image", "dep:safetensors"]
-ml = ["dep:burn", "dep:burn-dispatch", "dep:burn-wgpu", "dep:burn-ndarray", "dep:burn-store", "dep:hf-hub", "dep:wgpu", "dep:pollster"]
-ocr = ["layout", "dep:tokenizers"]
+extraction = ["detection", "dep:tokio", "dep:pdf_oxide", "dep:office_oxide", "dep:rbook"]
+ml = ["dep:burn", "dep:burn-dispatch", "dep:burn-store", "dep:hf-hub", "dep:wgpu", "dep:pollster"]
+ocr = ["ml", "dep:image", "dep:safetensors"]
 reranking = ["ml", "dep:tokenizers"]
-storage = ["dep:grafeo"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -50,13 +45,10 @@ serde_json = { workspace = true }
 blake3 = "1.8.5"
 utoipa = { workspace = true }
 
-# ML stack (detection, embedding, layout, reranking)
+# ML stack (detection, embedding, OCR, reranking)
 burn = { workspace = true, optional = true }
-# Single runtime-dispatched backend; wgpu (GPU) or ndarray (CPU) chosen by device.
+# Single runtime-dispatched backend; wgpu (GPU) or flex (CPU) chosen by device.
 burn-dispatch = { workspace = true, optional = true }
-# Direct deps only to name the concrete GPU/CPU device types for `DispatchDevice`.
-burn-wgpu = { workspace = true, optional = true }
-burn-ndarray = { workspace = true, optional = true }
 burn-store = { workspace = true, optional = true }
 hf-hub = { workspace = true, optional = true }
 safetensors = { workspace = true, optional = true }
@@ -66,58 +58,13 @@ image = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
 
-# Storage (graph backend)
-grafeo = { version = "0.5.42", default-features = false, features = ["embedded", "hybrid-search", "rdf", "text-index", "vector-index"], optional = true }
-
 # Extraction (document parsing)
 tokio = { workspace = true, optional = true }
 pdf_oxide = { version = "0.3.70", default-features = false, optional = true }
 office_oxide = { version = "0.1.2", default-features = false, optional = true }
 rbook = { version = "0.7.10", default-features = false, optional = true }
 
-# Extraction — tree-sitter grammars (internal implementation)
-tree-sitter = { version = "0.26.9", optional = true }
-tree-sitter-bash = { version = "0.25.1", optional = true }
-tree-sitter-c = { version = "0.24.2", optional = true }
-tree-sitter-c-sharp = { version = "0.23.5", optional = true }
-tree-sitter-containerfile = { version = "0.8.0", optional = true }
-tree-sitter-cpp = { version = "0.23.4", optional = true }
-tree-sitter-css = { version = "0.25.0", optional = true }
-tree-sitter-dart = { version = "0.2.0", optional = true }
-tree-sitter-go = { version = "0.25.0", optional = true }
-tree-sitter-graphql = { version = "0.1.0", optional = true }
-tree-sitter-groovy = { version = "0.1.2", optional = true }
-tree-sitter-hcl = { version = "1.1.0", optional = true }
-tree-sitter-html = { version = "0.23.2", optional = true }
-tree-sitter-java = { version = "0.23.5", optional = true }
-tree-sitter-javascript = { version = "0.25.0", optional = true }
-tree-sitter-json = { version = "0.24.8", optional = true }
-tree-sitter-lua = { version = "0.5.0", optional = true }
-tree-sitter-md = { version = "0.5.3", optional = true }
-tree-sitter-php = { version = "0.24.2", optional = true }
-tree-sitter-python = { version = "0.25.0", optional = true }
-tree-sitter-ruby = { version = "0.23.1", optional = true }
-tree-sitter-rust = { version = "0.24.2", optional = true }
-tree-sitter-scala = { version = "0.26.0", optional = true }
-tree-sitter-scss = { version = "1.0.0", optional = true }
-tree-sitter-sequel = { version = "0.3.11", optional = true }
-tree-sitter-svelte-next = { version = "0.1.1", optional = true }
-tree-sitter-swift = { version = "0.7.2", optional = true }
-tree-sitter-typescript = { version = "0.23.2", optional = true }
-tree-sitter-vue-updated = { version = "0.1.0", optional = true }
-tree-sitter-yaml = { version = "0.7.2", optional = true }
-
-# Build-time conversion of the committed magika onnx weights (detection feature)
-# into safetensors that are embedded in the binary. Nothing is fetched.
 [build-dependencies]
 onnx-ir = { workspace = true }
 protobuf = { workspace = true }
 safetensors = { workspace = true }
-
-[dev-dependencies]
-magika = "1.1.0"
-# ort is a transitive dep of magika; declared here to enable the
-# `download-binaries` feature so the ONNX Runtime library is fetched at build
-# time (otherwise magika fails to link).
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["download-binaries", "tls-rustls"] }
-regex = "1.12.4"

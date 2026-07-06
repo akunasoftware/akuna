@@ -57,8 +57,8 @@ impl From<std::io::Error> for FileExtractionError {
     }
 }
 
-impl From<crate::detection::MagikaInferenceError> for FileExtractionError {
-    fn from(source: crate::detection::MagikaInferenceError) -> Self {
+impl From<crate::detection::DetectionError> for FileExtractionError {
+    fn from(source: crate::detection::DetectionError) -> Self {
         Self::DetectionEngine {
             engine: "magika",
             source: Box::new(source),

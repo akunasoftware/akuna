@@ -30,8 +30,7 @@ let
       docker run -i --rm \
         --name "$CONTAINER_NAME" \
         -v "$PWD:/akuna" \
-        -p "9876:9876" \
-        localhost/akuna:${pVersion} \
+        akuna:v${pVersion} \
        "$@"
     '')
 
@@ -85,6 +84,7 @@ let
       target_system="''${NIX_TARGET_SYSTEM:-$(nix eval --impure --raw --expr 'builtins.currentSystem')}"
 
       image_out="target/oci/image-$target_system.tar"
+      mkdir -p "$(dirname "$image_out")"
       rm -f "$image_out"
 
       nix build ".#packages.$target_system.oci" -o "$image_out"
@@ -112,12 +112,11 @@ pkgs.mkShell {
 
       # language & framework tools
       rustToolChain
+      uv # python project/test runner
       cargo-bloat # rust binary size inspection
-      cargo-nextest # rust test runner with nicer interface
       cargo-machete # rust dependency redundancy checker
       cargo-deny # rust dependency license checker
       sccache # rust compilation cache
-      bacon # background rust code checker
     ]
     ++ aliases
     ++ mainPackage.passthru.dependencies.build;

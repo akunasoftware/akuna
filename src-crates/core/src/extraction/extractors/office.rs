@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::extraction::FileExtractionError;
-use crate::extraction::{DocumentContent, parts::from_text, pipeline};
+use crate::extraction::{
+    DocumentContent, ExtractionPipelineStepKind, FileExtractionError, pipeline,
+};
 
 /// Extract structured text and parts from Office documents.
 pub(in crate::extraction) fn extract(
@@ -10,23 +11,15 @@ pub(in crate::extraction) fn extract(
 ) -> Result<DocumentContent, FileExtractionError> {
     let started = std::time::Instant::now();
     let document = office_oxide::Document::open(file_path)?;
-    let text = document.plain_text();
-    let parts = from_text(&text);
+    let mut content = DocumentContent::from_text(document.plain_text());
     let duration_ms = started.elapsed().as_millis() as u64;
+    let audit = pipeline::step(
+        ExtractionPipelineStepKind::Parsing,
+        "office_oxide",
+        duration_ms,
+        BTreeMap::from([("parts".to_owned(), content.parts.len() as u64)]),
+    );
 
-    if parts.len() > 1 {
-        let part_count = parts.len();
-        return Ok(DocumentContent {
-            canonical_text: None,
-            parts,
-            pipeline: vec![pipeline::step(
-                "parsing",
-                "office_oxide",
-                duration_ms,
-                HashMap::from([("parts".to_owned(), part_count)]),
-            )],
-        });
-    }
-
-    Ok(DocumentContent::from_text(text))
+    content.pipeline.push(audit);
+    Ok(content)
 }

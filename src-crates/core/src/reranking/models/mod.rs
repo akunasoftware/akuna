@@ -1,3 +1,3 @@
-//! Hidden reranking model implementations.
+//! Reranking model support.
 
 pub(super) mod xlm_roberta;

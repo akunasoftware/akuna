@@ -19,38 +19,25 @@ let
   nativeBuildDependencies = [
     pkgs.pkg-config
     pkgs.clang
-    pkgs.cmake
     pkgs.perl
     pkgs.cacert
   ];
 
-  # Deps always required at runtime on nix systems
-  runDependencies = [
-    pkgs.openssl
-  ]
-  ++ lib.optionals pkgs.stdenv.isLinux [
+  # Vulkan is required by the GPU backend on Linux.
+  runDependencies = lib.optionals pkgs.stdenv.isLinux [
     pkgs.vulkan-loader
   ];
 
   runtimeLibraryPath = lib.makeLibraryPath runDependencies;
-  runtimePkgConfigPath = lib.makeSearchPathOutput "dev" "lib/pkgconfig" runDependencies;
 
   # Nix package runtime environment vars (do not use in devshell)
-  runtimeEnv = {
-    PKG_CONFIG_PATH = runtimePkgConfigPath;
-  }
-  // lib.optionalAttrs pkgs.stdenv.isLinux {
+  runtimeEnv = lib.optionalAttrs pkgs.stdenv.isLinux {
     LD_LIBRARY_PATH = lib.concatStringsSep ":" [
       runtimeLibraryPath
       "/run/opengl-driver/lib"
     ];
     LIBRARY_PATH = runtimeLibraryPath;
     VK_DRIVER_FILES = "/run/opengl-driver/share/vulkan/icd.d";
-  }
-  // lib.optionalAttrs pkgs.stdenv.isDarwin {
-    DYLD_LIBRARY_PATH = runtimeLibraryPath;
-    DYLD_FALLBACK_LIBRARY_PATH = runtimeLibraryPath;
-    LIBRARY_PATH = runtimeLibraryPath;
   };
 
   # Nix package build environment vars (do not use in devshell)
@@ -59,11 +46,6 @@ let
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     CARGO_HTTP_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-    OPENSSL_NO_VENDOR = "1";
-    OPENSSL_STATIC = "0";
-    OPENSSL_DIR = "${pkgs.openssl.dev}";
-    OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
-    OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
   }
   // lib.optionalAttrs pkgs.stdenv.isDarwin {
     NIX_LDFLAGS = "-dead_strip_dylibs";

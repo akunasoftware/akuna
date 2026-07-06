@@ -30,9 +30,6 @@ All of the below features, while preserving the following key values:
   - Structured content parts
   - Entity recognition & reification (WIP)
   - Hardware accelerated vector embedding
-  - Graph storage & traversal (WIP)
-  - Semantic search
-  - Fulltext search
   - ML reranking (WIP)
 
 ## [Application](./src-crates/app/)
@@ -44,26 +41,26 @@ Command line application, currently implements minimal features. Much more comin
 See [`src-crates/core/Cargo.toml`](./src-crates/core/Cargo.toml) for available feature sets.
 Use `full` to enable all feature-gated APIs.
 
-`akuna-core` is a single crate with feature-gated modules.
+`akuna-core` combines independently feature-gated capabilities.
 
-| Module          | Cargo Feature | Description                                          |
-| --------------- | ------------- | ---------------------------------------------------- |
-| `extraction`    | `extraction`  | Extracts file metadata, text content, and parts.     |
-| `embedding`     | `embedding`   | Loads text embedding models and embeds text batches. |
-| `layout`        | `layout`      | Detects document layout blocks in images.            |
-| `ocr`           | `ocr`         | Extracts text blocks from images.                    |
-| `storage`       | `storage`     | Provides graph primitives, types, and storage APIs.  |
-| `reranking`     | `reranking`   | ML reranking of retrieved candidates.                |
-| `detection`     | `detection`   | File type inference (Rust native Magika).            |
+| Module        | Cargo Feature | Description                                             |
+| ------------- | ------------- | ------------------------------------------------------- |
+| `detection`   | `detection`   | Classifies raw bytes and files by type.                 |
+| `embedding`   | `embedding`   | Loads text embedding models and embeds text batches.    |
+| `extraction`  | `extraction`  | Extracts file metadata, text content, and parts.        |
+| `ocr`         | `ocr`         | Detects and recognizes text in page images.             |
+| `ocr::layout` | `ocr`         | Detects document layout blocks in page images.          |
+| `reranking`   | `reranking`   | Scores and ranks documents against a query.             |
 
 Module source lives under [`./src-crates/core/src/`](./src-crates/core/src/).
 
 ## Workspace Crates
 
-| Crate          | Path                    | Purpose                                              |
-| -------------- | ----------------------- | ---------------------------------------------------- |
-| `akuna`        | `./src-crates/app/`     | Command line application binary.                     |
-| `akuna-core`   | `./src-crates/core/`    | Knowledge tooling library with feature-gated modules.|
+| Crate         | Path                 | Purpose                                                |
+| ------------- | -------------------- | ------------------------------------------------------ |
+| `akuna`       | `./src-crates/app/`  | Command-line application.                              |
+| `akuna-core`  | `./src-crates/core/` | Knowledge tooling library with feature-gated modules.  |
+| `akuna-ffi`   | `./src-crates/ffi/`  | Foreign-language bindings for `akuna-core`.            |
 
 ## Documentation
 

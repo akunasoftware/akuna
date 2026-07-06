@@ -1,17 +1,16 @@
-# Local testing & generated assets
-**.akuna/data
-
 # Local development files, caches, build-outputs etc.
 *.env*
 .direnv
 .devshell-bin
-.agents/planning/*
-!.agents/planning/.gitkeep
 *.log
 **.old*
 target/
 node_modules/
 dist/
+__pycache__/
+src-crates/ffi/tests/python/.venv/
+src-crates/ffi/tests/python/.pytest_cache/
+src-crates/ffi/tests/python/bindings/
 
 # General common file patterns
 .DS_Store

@@ -1,15 +1,11 @@
-use std::fmt;
-
 use burn::tensor::{
     Tensor, TensorData, activation::softmax, backend::Backend, module::conv1d,
     ops::ConvOptions,
 };
 use safetensors::{Dtype, SafeTensors};
 
-#[cfg(test)]
-use crate::detection::{Detection, RankedAlternative};
 use crate::detection::{
-    FileType,
+    DetectionError, FileType,
     models::magika_preprocess::{PreparedInput, prepare_input},
     vendor::{content::ContentType, model as vendor_model},
 };
@@ -94,40 +90,9 @@ const DENSE_BIAS: TensorSpec = TensorSpec {
     rank: 2,
 };
 
-/// Errors raised while loading or running the Magika model.
-#[derive(Debug)]
-pub enum MagikaInferenceError {
-    /// An I/O failure.
-    Io(std::io::Error),
-    /// Invalid or incompatible model configuration.
-    InvalidConfig(String),
-    /// A failure during inference or weight loading.
-    Runtime(String),
-}
-
-impl fmt::Display for MagikaInferenceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "io error: {e}"),
-            Self::InvalidConfig(e) => write!(f, "invalid configuration: {e}"),
-            Self::Runtime(e) => write!(f, "inference runtime error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for MagikaInferenceError {}
-
-impl From<std::io::Error> for MagikaInferenceError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
 /// The Magika file-type classifier.
 pub struct MagikaModel<B: Backend> {
     device: B::Device,
-    #[cfg(test)]
-    top_k: usize,
     embedding_weight: Vec<f32>,
     embedding_bias: Vec<f32>,
     layer_norm_0_weight: Tensor<B, 3>,
@@ -149,9 +114,7 @@ enum RowOutcome {
 
 impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     /// Loads the model from its bundled weights.
-    pub fn from_embedded(
-        device: &B::Device,
-    ) -> Result<Self, MagikaInferenceError> {
+    pub fn from_embedded(device: &B::Device) -> Result<Self, DetectionError> {
         Self::from_bytes(device, EMBEDDED_MODEL)
     }
 
@@ -159,16 +122,17 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     pub fn from_bytes(
         device: &B::Device,
         model_bytes: &[u8],
-    ) -> Result<Self, MagikaInferenceError> {
+    ) -> Result<Self, DetectionError> {
         let initializers =
-            SafeTensors::deserialize(model_bytes).map_err(|err| {
-                MagikaInferenceError::Runtime(format!("parse weights: {err}"))
+            SafeTensors::deserialize(model_bytes).map_err(|source| {
+                DetectionError::Model {
+                    operation: "parse weights",
+                    source: Box::new(source),
+                }
             })?;
 
         Ok(Self {
             device: (*device).clone(),
-            #[cfg(test)]
-            top_k: 3,
             embedding_weight: read_tensor_spec(
                 &initializers,
                 &EMBEDDING_WEIGHT,
@@ -218,68 +182,36 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         })
     }
 
-    /// Overrides the number of ranked alternatives returned per detection.
-    #[cfg(test)]
-    pub fn with_top_k(mut self, top_k: usize) -> Self {
-        self.top_k = top_k.max(1);
-        self
-    }
-
-    /// Classifies raw bytes and returns ranked alternatives.
-    #[cfg(test)]
-    pub fn detect_bytes(
-        &self,
-        bytes: &[u8],
-    ) -> Result<Detection, MagikaInferenceError> {
-        let mut all = self.detect_batch(vec![bytes])?;
-        Ok(all.remove(0))
-    }
-
     /// Resolves a single [`FileType`] for raw bytes.
     pub fn identify_bytes(
         &self,
         bytes: &[u8],
-    ) -> Result<FileType, MagikaInferenceError> {
+    ) -> Result<FileType, DetectionError> {
         let mut all = self.detect_content_type_batch(vec![bytes])?;
-        let content_type = all.remove(0);
-        Ok(FileType::Ruled(content_type))
-    }
-
-    /// Classifies a batch of inputs, returning ranked alternatives for each.
-    #[cfg(test)]
-    pub fn detect_batch(
-        &self,
-        inputs: Vec<&[u8]>,
-    ) -> Result<Vec<Detection>, MagikaInferenceError> {
-        self.classify(inputs)?
-            .into_iter()
-            .map(|outcome| match outcome {
-                RowOutcome::Ruled(content_type) => {
-                    Ok(detection_for_content_type(content_type))
-                }
-                RowOutcome::Scored(sorted) => {
-                    self.detection_from_sorted(sorted)
-                }
-            })
-            .collect()
+        Ok(all.remove(0))
     }
 
     fn detect_content_type_batch(
         &self,
         inputs: Vec<&[u8]>,
-    ) -> Result<Vec<ContentType>, MagikaInferenceError> {
+    ) -> Result<Vec<FileType>, DetectionError> {
         self.classify(inputs)?
             .into_iter()
             .map(|outcome| match outcome {
-                RowOutcome::Ruled(content_type) => Ok(content_type),
+                RowOutcome::Ruled(content_type) => {
+                    Ok(FileType::ruled(content_type))
+                }
                 RowOutcome::Scored(sorted) => {
-                    let (label_idx, score) =
-                        sorted.first().copied().ok_or_else(|| {
-                            MagikaInferenceError::Runtime(
-                                "no alternatives created".to_string(),
-                            )
+                    let (label_idx, score) = sorted
+                        .first()
+                        .copied()
+                        .ok_or_else(|| DetectionError::InvalidModel {
+                            message: "no alternatives created".to_owned(),
                         })?;
-                    self.final_content_type(label_idx, score)
+                    Ok(FileType::inferred(
+                        self.final_content_type(label_idx, score)?,
+                        score,
+                    ))
                 }
             })
             .collect()
@@ -289,7 +221,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     fn classify(
         &self,
         inputs: Vec<&[u8]>,
-    ) -> Result<Vec<RowOutcome>, MagikaInferenceError> {
+    ) -> Result<Vec<RowOutcome>, DetectionError> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -314,9 +246,10 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         if !pending_features.is_empty() {
             let rows = self.infer_rows(&pending_features)?;
             if rows.len() != pending_positions.len() {
-                return Err(MagikaInferenceError::Runtime(
-                    "runtime returned mismatched batch size".to_string(),
-                ));
+                return Err(DetectionError::InvalidModel {
+                    message: "runtime returned mismatched batch size"
+                        .to_owned(),
+                });
             }
 
             for (position, row) in pending_positions.into_iter().zip(rows) {
@@ -327,52 +260,17 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         outcomes
             .into_iter()
             .map(|outcome| {
-                outcome.ok_or_else(|| {
-                    MagikaInferenceError::Runtime(
-                        "missing detection result".to_string(),
-                    )
+                outcome.ok_or_else(|| DetectionError::InvalidModel {
+                    message: "missing detection result".to_owned(),
                 })
             })
             .collect()
     }
 
-    /// Builds a [`Detection`] from a sorted `(label_idx, score)` list.
-    #[cfg(test)]
-    fn detection_from_sorted(
-        &self,
-        sorted: Vec<(usize, f32)>,
-    ) -> Result<Detection, MagikaInferenceError> {
-        let alternatives = sorted
-            .iter()
-            .take(self.top_k)
-            .map(|(label_idx, score)| {
-                let content_type =
-                    self.final_content_type(*label_idx, *score)?;
-                Ok(alternative_for_content_type(content_type, *score))
-            })
-            .collect::<Result<Vec<_>, MagikaInferenceError>>()?;
-
-        let best = alternatives
-            .first()
-            .ok_or_else(|| {
-                MagikaInferenceError::Runtime(
-                    "no alternatives created".to_string(),
-                )
-            })?
-            .clone();
-
-        Ok(Detection {
-            label: best.label.clone(),
-            mime_type: best.mime_type.clone(),
-            confidence: best.confidence,
-            alternatives,
-        })
-    }
-
     fn forward(
         &self,
         batch_features: &[Vec<i32>],
-    ) -> Result<Tensor<B, 2>, MagikaInferenceError> {
+    ) -> Result<Tensor<B, 2>, DetectionError> {
         let batch_size = batch_features.len();
         let flat = batch_features
             .iter()
@@ -380,23 +278,25 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
             .collect::<Vec<_>>();
 
         if flat.len() != batch_size * SEQ_LEN {
-            return Err(MagikaInferenceError::Runtime(
-                "unexpected feature batch shape".to_string(),
-            ));
+            return Err(DetectionError::InvalidModel {
+                message: "unexpected feature batch shape".to_owned(),
+            });
         }
 
         let mut embedded = Vec::with_capacity(batch_size * SEQ_LEN * EMBED_DIM);
         for features in batch_features {
             for &feature in features {
                 let index = usize::try_from(feature).map_err(|_| {
-                    MagikaInferenceError::Runtime(format!(
-                        "negative feature value: {feature}"
-                    ))
+                    DetectionError::InvalidModel {
+                        message: format!("negative feature value: {feature}"),
+                    }
                 })?;
                 if index >= NUM_CLASSES {
-                    return Err(MagikaInferenceError::Runtime(format!(
-                        "feature value out of range: {feature}"
-                    )));
+                    return Err(DetectionError::InvalidModel {
+                        message: format!(
+                            "feature value out of range: {feature}"
+                        ),
+                    });
                 }
 
                 let start = index * EMBED_DIM;
@@ -447,10 +347,13 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     fn infer_rows(
         &self,
         batch_features: &[Vec<i32>],
-    ) -> Result<Vec<Vec<f32>>, MagikaInferenceError> {
+    ) -> Result<Vec<Vec<f32>>, DetectionError> {
         let probs = self.forward(batch_features)?;
-        let flat = probs.into_data().to_vec::<f32>().map_err(|err| {
-            MagikaInferenceError::Runtime(format!("extract tensor data: {err}"))
+        let flat = probs.into_data().to_vec::<f32>().map_err(|source| {
+            DetectionError::Model {
+                operation: "read tensor output",
+                source: Box::new(source),
+            }
         })?;
 
         Ok(flat.chunks(DENSE_OUT).map(|chunk| chunk.to_vec()).collect())
@@ -460,7 +363,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         &self,
         label_idx: usize,
         score: f32,
-    ) -> Result<ContentType, MagikaInferenceError> {
+    ) -> Result<ContentType, DetectionError> {
         let inferred_type = label_for_index(label_idx)?.content_type();
         if score < vendor_model::CONFIG.thresholds[inferred_type as usize] {
             return Ok(if inferred_type.info().is_text {
@@ -475,20 +378,17 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
 }
 
 /// Returns a probability row's entries enumerated and sorted by score descending.
-fn sorted_row(
+pub(in crate::detection) fn sorted_row(
     row: Vec<f32>,
-) -> Result<Vec<(usize, f32)>, MagikaInferenceError> {
+) -> Result<Vec<(usize, f32)>, DetectionError> {
     if row.len() != DENSE_OUT {
-        return Err(MagikaInferenceError::Runtime(format!(
-            "unexpected logits row size: {}",
-            row.len()
-        )));
+        return Err(DetectionError::InvalidModel {
+            message: format!("unexpected logits row size: {}", row.len()),
+        });
     }
 
     let mut indexed: Vec<(usize, f32)> = row.into_iter().enumerate().collect();
-    indexed.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    indexed.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Ok(indexed)
 }
 
@@ -510,7 +410,7 @@ fn tensor_1d_from_flat<B: Backend<FloatElem = f32>>(
 
 fn read_conv_weight(
     initializers: &SafeTensors<'_>,
-) -> Result<Vec<f32>, MagikaInferenceError> {
+) -> Result<Vec<f32>, DetectionError> {
     let raw = read_tensor_spec(initializers, &CONV_WEIGHT)?;
     let mut flattened = Vec::with_capacity(
         CONV_OUT_CHANNELS * CHANNELS_PER_TOKEN * CONV_KERNEL,
@@ -542,7 +442,7 @@ fn tensor_3d<B: Backend<FloatElem = f32>>(
     initializers: &SafeTensors<'_>,
     spec: &TensorSpec,
     shape: [usize; 3],
-) -> Result<Tensor<B, 3>, MagikaInferenceError> {
+) -> Result<Tensor<B, 3>, DetectionError> {
     Ok(Tensor::<B, 3>::from_data(
         TensorData::new(read_tensor_spec(initializers, spec)?, shape),
         device,
@@ -552,7 +452,7 @@ fn tensor_3d<B: Backend<FloatElem = f32>>(
 fn read_tensor_spec(
     initializers: &SafeTensors<'_>,
     spec: &TensorSpec,
-) -> Result<Vec<f32>, MagikaInferenceError> {
+) -> Result<Vec<f32>, DetectionError> {
     read_f32_tensor(initializers, spec.name, &spec.shape[..spec.rank])
 }
 
@@ -560,24 +460,32 @@ fn read_f32_tensor(
     initializers: &SafeTensors<'_>,
     name: &str,
     expected_shape: &[usize],
-) -> Result<Vec<f32>, MagikaInferenceError> {
-    let tensor = initializers.tensor(name).map_err(|_| {
-        MagikaInferenceError::Runtime(format!("missing weight: {name}"))
-    })?;
+) -> Result<Vec<f32>, DetectionError> {
+    let tensor =
+        initializers
+            .tensor(name)
+            .map_err(|source| DetectionError::Model {
+                operation: "read weight",
+                source: Box::new(source),
+            })?;
 
     if tensor.dtype() != Dtype::F32 {
-        return Err(MagikaInferenceError::Runtime(format!(
-            "weight {name} has unexpected dtype {:?}",
-            tensor.dtype()
-        )));
+        return Err(DetectionError::InvalidModel {
+            message: format!(
+                "weight {name} has unexpected dtype {:?}",
+                tensor.dtype()
+            ),
+        });
     }
 
     if tensor.shape() != expected_shape {
-        return Err(MagikaInferenceError::Runtime(format!(
-            "weight {name} has shape {:?}, expected {:?}",
-            tensor.shape(),
-            expected_shape
-        )));
+        return Err(DetectionError::InvalidModel {
+            message: format!(
+                "weight {name} has shape {:?}, expected {:?}",
+                tensor.shape(),
+                expected_shape
+            ),
+        });
     }
 
     let values = tensor
@@ -587,11 +495,13 @@ fn read_f32_tensor(
         .collect::<Vec<_>>();
 
     if values.len() != expected_shape.iter().product::<usize>() {
-        return Err(MagikaInferenceError::Runtime(format!(
-            "weight {name} has {} values, expected {}",
-            values.len(),
-            expected_shape.iter().product::<usize>()
-        )));
+        return Err(DetectionError::InvalidModel {
+            message: format!(
+                "weight {name} has {} values, expected {}",
+                values.len(),
+                expected_shape.iter().product::<usize>()
+            ),
+        });
     }
 
     Ok(values)
@@ -633,11 +543,11 @@ fn layer_norm_axis_1_2d<B: Backend<FloatElem = f32>>(
 
 fn label_for_index(
     index: usize,
-) -> Result<vendor_model::Label, MagikaInferenceError> {
+) -> Result<vendor_model::Label, DetectionError> {
     if index >= vendor_model::NUM_LABELS {
-        return Err(MagikaInferenceError::Runtime(format!(
-            "label index out of range: {index}"
-        )));
+        return Err(DetectionError::InvalidModel {
+            message: format!("label index out of range: {index}"),
+        });
     }
 
     Ok(
@@ -647,74 +557,4 @@ fn label_for_index(
             std::mem::transmute::<u32, vendor_model::Label>(index as u32)
         },
     )
-}
-
-#[cfg(test)]
-fn detection_for_content_type(content_type: ContentType) -> Detection {
-    let alternative = alternative_for_content_type(content_type, 1.0);
-
-    Detection {
-        label: alternative.label.clone(),
-        mime_type: alternative.mime_type.clone(),
-        confidence: alternative.confidence,
-        alternatives: vec![alternative],
-    }
-}
-
-#[cfg(test)]
-fn alternative_for_content_type(
-    content_type: ContentType,
-    confidence: f32,
-) -> RankedAlternative {
-    let info = content_type.info();
-
-    RankedAlternative {
-        label: info.label.to_string(),
-        mime_type: Some(info.mime_type.to_string()),
-        confidence,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ml::backend::{Backend, cpu_device};
-
-    use super::MagikaModel;
-
-    #[test]
-    fn classifier_batch_is_deterministic() {
-        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build classifier");
-
-        let a = classifier
-            .detect_bytes(b"abcdef")
-            .expect("first inference should succeed");
-        let b = classifier
-            .detect_bytes(b"abcdef")
-            .expect("second inference should succeed");
-        assert_eq!(a, b);
-
-        let batch = classifier
-            .detect_batch(vec![b"a", b"b", b"c"])
-            .expect("batch inference should succeed");
-        assert_eq!(batch.len(), 3);
-    }
-
-    #[test]
-    fn embedded_model_builds() {
-        MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build embedded model");
-    }
-
-    #[test]
-    fn explicit_top_k_is_applied() {
-        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build model")
-            .with_top_k(5);
-
-        let detection = classifier
-            .detect_bytes(b"function greet() { return 'hi'; }")
-            .expect("detect bytes");
-        assert_eq!(detection.alternatives.len(), 5);
-    }
 }

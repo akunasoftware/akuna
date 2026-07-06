@@ -18,7 +18,7 @@ const BACKBONE_PREFIX: &str = "model.backbone.encoder";
 
 /// Native PP-OCRv6 tiny recognizer.
 #[derive(Debug)]
-pub(crate) struct PpOcrRecognizerTiny<B: Backend> {
+pub(crate) struct PpOcrTextRecognizerTiny<B: Backend> {
     stem_conv1: ConvLayer<B>,
     stem_conv2: ConvLayer<B>,
     blocks: Vec<LcnetBlock<B>>,
@@ -31,7 +31,7 @@ pub(crate) struct PpOcrRecognizerTiny<B: Backend> {
     fc2: LinearLayer<B>,
 }
 
-impl<B: Backend<FloatElem = f32>> PpOcrRecognizerTiny<B> {
+impl<B: Backend<FloatElem = f32>> PpOcrTextRecognizerTiny<B> {
     pub(crate) fn from_safetensors(
         tensors: &SafeTensors<'_>,
         num_classes: usize,
