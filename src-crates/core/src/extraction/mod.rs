@@ -3,15 +3,15 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use akuna_core::extraction::{document, ExtractionConfig};
+//! use akuna_core::extraction::{extract_file, ExtractionConfig};
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! let result = document::from_path("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
+//! let result = extract_file("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
 
-pub mod document;
+mod document;
 mod errors;
 mod extractors;
 mod metadata;
@@ -20,10 +20,14 @@ mod pipeline;
 mod provenance;
 mod types;
 
+#[cfg(test)]
+mod tests;
+
+pub use document::{extract_bytes, extract_file};
 pub use errors::FileExtractionError;
 pub(in crate::extraction) use types::DocumentContent;
 pub use types::{
     ExtractionBbox, ExtractionByteRange, ExtractionConfig, ExtractionMetadata,
-    ExtractionPart, ExtractionPipelineStep, ExtractionProvenance,
-    ExtractionResult, PartKind,
+    ExtractionPart, ExtractionPipelineStep, ExtractionPipelineStepKind,
+    ExtractionProvenance, ExtractionResult, PartKind,
 };

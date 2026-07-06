@@ -1,7 +1,6 @@
 //! Graph storage domain types and traits.
 //!
-//! Obtain a context via [`open_context`] or [`in_memory_context`] and program
-//! against the [`GraphDbContext`] trait.
+//! Open graph contexts and use the [`GraphDbContext`] trait.
 
 mod backend;
 mod error;

@@ -8,7 +8,16 @@
 
 - Greenfield. No legacy/regression padding. Refactor and break when useful.
 - Repo-wide hard constraints live in project files.
+- Architecture principles live in `.agents/principles.md`; binding.
 - Never hardcode app name in code/docs. Read from constants or toml for rebrand safety.
+
+# API Style
+
+- Actor types are agent nouns saying what they do, e.g. `TextEmbedder`, `TextReranker`, `LayoutDetector`, `OcrEngine`, `FileTypeDetector`.
+- Options structs are `<Actor>Options`.
+- Model enums stay domain-named, e.g. `EmbeddingModel`, `OcrDetectionModel`.
+- Byte/path method pairs are `<verb>_bytes` and `<verb>_file` in Rust; Python FFI uses `<verb>_path` for path variants.
+- Pipeline configuration is a flat plain-field options struct with defaults, not a builder.
 
 # Workspace
 

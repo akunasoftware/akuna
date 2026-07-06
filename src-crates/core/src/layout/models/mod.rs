@@ -1,3 +1,3 @@
-//! Hidden layout model implementations.
+//! Layout model support.
 
 pub(super) mod pp_doclayout;

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Auto-fix workspace format and lints. [needs: cargo +rustfmt +clippy]
 
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ws-env.sh"

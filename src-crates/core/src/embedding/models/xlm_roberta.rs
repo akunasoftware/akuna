@@ -187,7 +187,7 @@ where
     }
 }
 
-/// Loads a pretrained XLM-RoBERTa embedding model from Hugging Face.
+/// Loads an XLM-RoBERTa embedding model.
 pub(crate) async fn load_pretrained_xlm_roberta_embedding<B>(
     device: &B::Device,
     repo_id: &str,

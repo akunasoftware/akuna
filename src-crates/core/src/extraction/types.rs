@@ -12,7 +12,7 @@ pub struct ExtractionConfig {
     pub return_parts: bool,
     /// OCR configuration for image extraction.
     #[cfg(feature = "ocr")]
-    pub ocr: crate::ocr::OcrOptions,
+    pub ocr: crate::ocr::OcrEngineOptions,
 }
 
 impl Default for ExtractionConfig {
@@ -22,7 +22,7 @@ impl Default for ExtractionConfig {
             return_content: false,
             return_parts: false,
             #[cfg(feature = "ocr")]
-            ocr: crate::ocr::OcrOptions::default(),
+            ocr: crate::ocr::OcrEngineOptions::default(),
         }
     }
 }
@@ -42,6 +42,18 @@ pub struct ExtractionResult {
     /// Structured content parts derived from extraction, when content was read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parts: Option<Vec<ExtractionPart>>,
+}
+
+/// Closed set of extraction pipeline step roles.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionPipelineStepKind {
+    /// File type detection.
+    Detection,
+    /// Structured or plain content parsing.
+    Parsing,
+    /// Text recognition from image regions.
+    Recognition,
 }
 
 /// Structured content part derived from a source document.
@@ -105,15 +117,21 @@ pub enum PartKind {
 /// One step in the extraction pipeline that processed a document.
 #[derive(Clone, Debug, Serialize)]
 pub struct ExtractionPipelineStep {
-    /// Step role (e.g. `detection`, `recognition`, `parsing`).
-    pub step: String,
+    /// Step role.
+    pub step: ExtractionPipelineStepKind,
     /// Engine that performed this step (e.g. model identifier, library name).
     pub engine: String,
     /// Wall-clock duration of this step in milliseconds.
     pub duration_ms: u64,
-    /// Throughput metrics (counts, etc).
+    /// Throughput metrics.
+    ///
+    /// Known keys:
+    ///
+    /// - `pages`: pages parsed.
+    /// - `parts`: structured parts emitted.
+    /// - `texts`: recognized text blocks.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub outputs: HashMap<String, usize>,
+    pub outputs: HashMap<String, u64>,
 }
 
 /// Bounding box in source coordinates.

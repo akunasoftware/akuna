@@ -10,7 +10,7 @@ mod lcnet;
 use anyhow::{Context, Result};
 use hf_hub::api::sync::Api;
 
-/// Downloads `model.safetensors` from `repo` and returns its bytes.
+/// Loads OCR model weights.
 pub(in crate::ocr) fn fetch_safetensors(repo: &str) -> Result<Vec<u8>> {
     let path = Api::new()
         .with_context(|| format!("failed to init Hugging Face API for {repo}"))?

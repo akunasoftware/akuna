@@ -30,7 +30,7 @@ pub(in crate::extraction) fn from_bytes(
     })
 }
 
-/// Detection result used internally before assembling full metadata.
+// Minimal detection data for extraction metadata.
 struct DetectionResult {
     mime_type: String,
     label: String,
@@ -42,8 +42,8 @@ struct DetectionResult {
 fn detect_content_type(
     bytes: &[u8],
 ) -> Result<DetectionResult, FileExtractionError> {
-    let magika = crate::detection::Session::new()?;
-    let type_info = magika.identify_content_sync(bytes)?.info();
+    let magika = crate::detection::FileTypeDetector::new()?;
+    let type_info = magika.identify_bytes(bytes)?.info();
 
     Ok(DetectionResult {
         mime_type: type_info.mime_type.to_string(),

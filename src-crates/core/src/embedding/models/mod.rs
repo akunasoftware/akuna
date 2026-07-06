@@ -1,4 +1,4 @@
-//! Hidden embedding model implementations.
+//! Embedding model support.
 
 pub(super) mod bert;
 pub(super) mod mpnet;

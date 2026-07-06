@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::extraction::FileExtractionError;
-use crate::extraction::{DocumentContent, parts::from_text, pipeline};
+use crate::extraction::{
+    DocumentContent, ExtractionPipelineStepKind, parts::from_text, pipeline,
+};
 
 /// Extract structured text and parts from Office documents.
 pub(in crate::extraction) fn extract(
@@ -20,10 +22,10 @@ pub(in crate::extraction) fn extract(
             canonical_text: None,
             parts,
             pipeline: vec![pipeline::step(
-                "parsing",
+                ExtractionPipelineStepKind::Parsing,
                 "office_oxide",
                 duration_ms,
-                HashMap::from([("parts".to_owned(), part_count)]),
+                HashMap::from([("parts".to_owned(), part_count as u64)]),
             )],
         });
     }

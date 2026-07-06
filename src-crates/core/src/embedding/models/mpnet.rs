@@ -316,7 +316,7 @@ where
     }
 }
 
-/// Loads a pretrained MPNet embedding model from Hugging Face.
+/// Loads an MPNet embedding model.
 pub(crate) async fn load_pretrained_mpnet_embedding<B>(
     device: &B::Device,
     repo_id: &str,

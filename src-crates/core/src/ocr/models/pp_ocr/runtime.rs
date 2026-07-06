@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use anyhow::Result;
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, Rgb, RgbImage};
 use safetensors::SafeTensors;
 
 use crate::ocr::models::pp_ocr::dictionary::load_dictionary;
-use crate::ocr::models::pp_ocr::native::det::PpOcrDetector;
-use crate::ocr::models::pp_ocr::native::det_medium::PpOcrDetectorMedium;
-use crate::ocr::models::pp_ocr::native::rec::PpOcrRecognizer;
-use crate::ocr::models::pp_ocr::native::rec_tiny::PpOcrRecognizerTiny;
+use crate::ocr::models::pp_ocr::native::det::PpOcrTextDetector;
+use crate::ocr::models::pp_ocr::native::det_medium::PpOcrTextDetectorMedium;
+use crate::ocr::models::pp_ocr::native::rec::PpOcrTextRecognizer;
+use crate::ocr::models::pp_ocr::native::rec_tiny::PpOcrTextRecognizerTiny;
 use crate::ocr::models::pp_ocr::native::{self};
 use crate::ocr::models::pp_ocr::postprocess::{
     postprocess_detector, postprocess_recognizer,
@@ -23,16 +23,14 @@ use crate::ocr::models::pp_ocr::spec::{
     recognizer_config,
 };
 use crate::ocr::{
-    OcrBlock, OcrBlockKind, OcrDetector, OcrPage, OcrRecognizer, OcrRect,
+    OcrBlock, OcrBlockKind, OcrDetectionModel, OcrPage, OcrRecognitionModel,
+    OcrRect,
 };
-
-const CROP_PADDING_RATIO: f32 = 0.08;
-const MIN_CROP_PADDING: f32 = 2.0;
 
 #[derive(Debug)]
 pub(crate) struct PpOcrRuntime<B: Backend> {
-    pub(crate) detector: OcrDetector,
-    pub(crate) recognizer: OcrRecognizer,
+    pub(crate) detection_model: OcrDetectionModel,
+    pub(crate) recognition_model: OcrRecognitionModel,
     detector_model: DetectorModel<B>,
     recognizer_model: RecognizerModel<B>,
     dictionary: Vec<String>,
@@ -40,14 +38,14 @@ pub(crate) struct PpOcrRuntime<B: Backend> {
 
 #[derive(Debug)]
 enum DetectorModel<B: Backend> {
-    Native(Box<PpOcrDetector<B>>),
-    NativeMedium(Box<PpOcrDetectorMedium<B>>),
+    Native(Box<PpOcrTextDetector<B>>),
+    NativeMedium(Box<PpOcrTextDetectorMedium<B>>),
 }
 
 #[derive(Debug)]
 enum RecognizerModel<B: Backend> {
-    Native(Box<PpOcrRecognizer<B>>),
-    NativeTiny(Box<PpOcrRecognizerTiny<B>>),
+    Native(Box<PpOcrTextRecognizer<B>>),
+    NativeTiny(Box<PpOcrTextRecognizerTiny<B>>),
 }
 
 impl<B> PpOcrRuntime<B>
@@ -55,24 +53,24 @@ where
     B: Backend<FloatElem = f32>,
 {
     pub(crate) async fn load(
-        detector: OcrDetector,
-        recognizer: OcrRecognizer,
+        detection_model: OcrDetectionModel,
+        recognition_model: OcrRecognitionModel,
         device: &B::Device,
         cache_dir: Option<PathBuf>,
     ) -> Result<Self> {
-        let recognizer_cfg = recognizer_config(recognizer);
+        let recognizer_cfg = recognizer_config(recognition_model);
         let dictionary =
             load_dictionary(&recognizer_cfg, cache_dir.as_deref()).await?;
-        let detector_model = DetectorModel::load(detector, device)?;
+        let detector_model = DetectorModel::load(detection_model, device)?;
         let recognizer_model = RecognizerModel::load(
-            recognizer,
+            recognition_model,
             recognizer_cfg.num_classes,
             device,
         )?;
 
         Ok(Self {
-            detector,
-            recognizer,
+            detection_model,
+            recognition_model,
             detector_model,
             recognizer_model,
             dictionary,
@@ -84,7 +82,7 @@ where
         image: &DynamicImage,
         device: &B::Device,
     ) -> Result<OcrPage> {
-        let detector_config = detector_config(self.detector);
+        let detector_config = detector_config(self.detection_model);
         let detector_input = preprocess_detector(image, &detector_config)?;
         let original_width = detector_input.original_width;
         let original_height = detector_input.original_height;
@@ -97,10 +95,11 @@ where
             original_height,
         )?;
 
-        let recognizer_config = recognizer_config(self.recognizer);
+        let recognizer_config = recognizer_config(self.recognition_model);
+        let rgb_image = image.to_rgb8();
         let mut blocks = Vec::new();
         for text_box in boxes {
-            let crop = crop_box(image, text_box.points)?;
+            let crop = crop_box(&rgb_image, text_box.points)?;
             let recognizer_input =
                 preprocess_recognizer(&crop, &recognizer_config)?;
             let recognizer_tensor = input_tensor(recognizer_input, device);
@@ -112,30 +111,14 @@ where
                 &recognizer_config,
             )?;
             // Drop boxes the recognizer reads as empty.
-            let trimmed = text.text.trim();
-            if !trimmed.is_empty() {
+            if !text.text.trim().is_empty() {
                 blocks.push(OcrBlock {
-                    text: trimmed.to_string(),
+                    text: text.text,
                     bbox: OcrRect::from_points(text_box.points),
-                    confidence: Some(text.confidence.min(text_box.score)),
+                    confidence: Some(text.confidence),
                     kind: OcrBlockKind::Text,
                 });
             }
-        }
-
-        if blocks.is_empty() {
-            let text = self.recognize_crop(image, device)?;
-            blocks.push(OcrBlock {
-                text: text.text,
-                bbox: OcrRect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: image.width() as f32,
-                    height: image.height() as f32,
-                },
-                confidence: Some(text.confidence),
-                kind: OcrBlockKind::Unknown,
-            });
         }
 
         Ok(OcrPage {
@@ -144,41 +127,24 @@ where
             blocks,
         })
     }
-
-    fn recognize_crop(
-        &self,
-        image: &DynamicImage,
-        device: &B::Device,
-    ) -> Result<crate::ocr::models::pp_ocr::postprocess::RecognizedText> {
-        let recognizer_config = recognizer_config(self.recognizer);
-        let recognizer_input =
-            preprocess_recognizer(image, &recognizer_config)?;
-        let recognizer_tensor = input_tensor(recognizer_input, device);
-        let recognizer_output =
-            self.recognizer_model.forward(recognizer_tensor);
-        let text = postprocess_recognizer(
-            recognizer_output,
-            &self.dictionary,
-            &recognizer_config,
-        )?;
-
-        Ok(text)
-    }
 }
 
 impl<B: Backend<FloatElem = f32>> DetectorModel<B> {
-    fn load(detector: OcrDetector, device: &B::Device) -> Result<Self> {
-        let bytes = native::fetch_safetensors(det_safetensors_repo(detector))?;
+    fn load(model: OcrDetectionModel, device: &B::Device) -> Result<Self> {
+        let bytes = native::fetch_safetensors(det_safetensors_repo(model))?;
         let tensors = SafeTensors::deserialize(&bytes)?;
-        match detector {
+        match model {
             // Medium uses the LKPAN detector variant.
-            OcrDetector::PpOcrV6MediumDet => Ok(Self::NativeMedium(Box::new(
-                PpOcrDetectorMedium::from_safetensors(&tensors, device)?,
-            ))),
-            OcrDetector::PpOcrV6TinyDet | OcrDetector::PpOcrV6SmallDet => {
-                Ok(Self::Native(Box::new(PpOcrDetector::from_safetensors(
+            OcrDetectionModel::PpOcrV6Medium => Ok(Self::NativeMedium(
+                Box::new(PpOcrTextDetectorMedium::from_safetensors(
+                    &tensors, device,
+                )?),
+            )),
+            OcrDetectionModel::PpOcrV6Tiny
+            | OcrDetectionModel::PpOcrV6Small => {
+                Ok(Self::Native(Box::new(PpOcrTextDetector::from_safetensors(
                     &tensors,
-                    &native::det::det_config(detector),
+                    &native::det::det_config(model),
                     device,
                 )?)))
             }
@@ -195,31 +161,30 @@ impl<B: Backend<FloatElem = f32>> DetectorModel<B> {
 
 impl<B: Backend<FloatElem = f32>> RecognizerModel<B> {
     fn load(
-        recognizer: OcrRecognizer,
+        model: OcrRecognitionModel,
         num_classes: usize,
         device: &B::Device,
     ) -> Result<Self> {
-        let bytes =
-            native::fetch_safetensors(rec_safetensors_repo(recognizer))?;
+        let bytes = native::fetch_safetensors(rec_safetensors_repo(model))?;
         let tensors = SafeTensors::deserialize(&bytes)?;
-        match recognizer {
+        match model {
             // Tiny uses the conv-only head variant.
-            OcrRecognizer::PpOcrV6TinyRec => Ok(Self::NativeTiny(Box::new(
-                PpOcrRecognizerTiny::from_safetensors(
+            OcrRecognitionModel::PpOcrV6Tiny => Ok(Self::NativeTiny(Box::new(
+                PpOcrTextRecognizerTiny::from_safetensors(
                     &tensors,
                     num_classes,
                     device,
                 )?,
             ))),
-            OcrRecognizer::PpOcrV6SmallRec
-            | OcrRecognizer::PpOcrV6MediumRec => {
-                Ok(Self::Native(Box::new(PpOcrRecognizer::from_safetensors(
+            OcrRecognitionModel::PpOcrV6Small
+            | OcrRecognitionModel::PpOcrV6Medium => Ok(Self::Native(Box::new(
+                PpOcrTextRecognizer::from_safetensors(
                     &tensors,
-                    &native::rec::rec_config(recognizer),
+                    &native::rec::rec_config(model),
                     num_classes,
                     device,
-                )?)))
-            }
+                )?,
+            ))),
         }
     }
 
@@ -243,45 +208,90 @@ fn input_tensor<B: Backend>(
     Tensor::<B, 4>::from_data(data, device)
 }
 
-fn crop_box(
-    image: &DynamicImage,
-    points: [[f32; 2]; 4],
-) -> Result<DynamicImage> {
-    let (image_width, image_height) = image.dimensions();
-    let raw_min_x = points
-        .iter()
-        .map(|point| point[0])
-        .fold(f32::INFINITY, f32::min)
-        .floor();
-    let raw_min_y = points
-        .iter()
-        .map(|point| point[1])
-        .fold(f32::INFINITY, f32::min)
-        .floor();
-    let raw_max_x = points
-        .iter()
-        .map(|point| point[0])
-        .fold(f32::NEG_INFINITY, f32::max)
-        .ceil();
-    let raw_max_y = points
-        .iter()
-        .map(|point| point[1])
-        .fold(f32::NEG_INFINITY, f32::max)
-        .ceil();
-
-    let crop_width = raw_max_x - raw_min_x;
-    let crop_height = raw_max_y - raw_min_y;
-    let x_padding = (crop_width * CROP_PADDING_RATIO).max(MIN_CROP_PADDING);
-    let y_padding = (crop_height * CROP_PADDING_RATIO).max(MIN_CROP_PADDING);
-
-    let min_x = (raw_min_x - x_padding).clamp(0.0, image_width as f32) as u32;
-    let min_y = (raw_min_y - y_padding).clamp(0.0, image_height as f32) as u32;
-    let max_x = (raw_max_x + x_padding).clamp(0.0, image_width as f32) as u32;
-    let max_y = (raw_max_y + y_padding).clamp(0.0, image_height as f32) as u32;
-
-    if max_x <= min_x || max_y <= min_y {
+fn crop_box(image: &RgbImage, points: [[f32; 2]; 4]) -> Result<DynamicImage> {
+    // The current detector is closest to PaddleOCR parity with truncated boxes.
+    let points =
+        points.map(|point| [point[0] as i32 as f32, point[1] as i32 as f32]);
+    let crop_width = edge_len(points[0], points[1])
+        .max(edge_len(points[2], points[3])) as u32;
+    let crop_height = edge_len(points[0], points[3])
+        .max(edge_len(points[1], points[2])) as u32;
+    if crop_width == 0 || crop_height == 0 {
         anyhow::bail!("PP-OCR detected invalid crop bounds")
     }
 
-    Ok(image.crop_imm(min_x, min_y, max_x - min_x, max_y - min_y))
+    let mut crop = warp_crop(image, points, crop_width, crop_height);
+    if crop.height() as f32 / crop.width() as f32 >= 1.5 {
+        crop = image::imageops::rotate90(&crop);
+    }
+
+    Ok(DynamicImage::ImageRgb8(crop))
+}
+
+fn edge_len(start: [f32; 2], end: [f32; 2]) -> f32 {
+    ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt()
+}
+
+fn warp_crop(
+    image: &RgbImage,
+    points: [[f32; 2]; 4],
+    width: u32,
+    height: u32,
+) -> RgbImage {
+    let mut crop = RgbImage::new(width, height);
+    for y in 0..height {
+        // OpenCV maps destination pixels against a [0, width] x [0, height]
+        // rectangle, so the last sampled pixel does not reach 1.0 exactly.
+        let v = y as f32 / height as f32;
+        for x in 0..width {
+            let u = x as f32 / width as f32;
+            let top = lerp_point(points[0], points[1], u);
+            let bottom = lerp_point(points[3], points[2], u);
+            let source = lerp_point(top, bottom, v);
+            crop.put_pixel(x, y, sample_cubic(image, source[0], source[1]));
+        }
+    }
+    crop
+}
+
+fn lerp_point(start: [f32; 2], end: [f32; 2], t: f32) -> [f32; 2] {
+    [
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+    ]
+}
+
+fn sample_cubic(image: &RgbImage, x: f32, y: f32) -> Rgb<u8> {
+    let base_x = x.floor() as i32;
+    let base_y = y.floor() as i32;
+    let weights_x = cubic_weights(x - base_x as f32);
+    let weights_y = cubic_weights(y - base_y as f32);
+    let mut channels = [0.0; 3];
+
+    for (ky, weight_y) in weights_y.into_iter().enumerate() {
+        let source_y =
+            (base_y + ky as i32 - 1).clamp(0, image.height() as i32 - 1) as u32;
+        for (kx, weight_x) in weights_x.into_iter().enumerate() {
+            let source_x = (base_x + kx as i32 - 1)
+                .clamp(0, image.width() as i32 - 1)
+                as u32;
+            let weight = weight_x * weight_y;
+            let pixel = image.get_pixel(source_x, source_y).0;
+            for channel in 0..3 {
+                channels[channel] += pixel[channel] as f32 * weight;
+            }
+        }
+    }
+
+    Rgb(channels.map(|value| value.round().clamp(0.0, 255.0) as u8))
+}
+
+fn cubic_weights(x: f32) -> [f32; 4] {
+    const A: f32 = -0.75;
+    let c0 =
+        ((A * (x + 1.0) - 5.0 * A) * (x + 1.0) + 8.0 * A) * (x + 1.0) - 4.0 * A;
+    let c1 = ((A + 2.0) * x - (A + 3.0)) * x * x + 1.0;
+    let c2 = ((A + 2.0) * (1.0 - x) - (A + 3.0)) * (1.0 - x) * (1.0 - x) + 1.0;
+    let c3 = 1.0 - c0 - c1 - c2;
+    [c0, c1, c2, c3]
 }

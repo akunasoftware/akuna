@@ -1,24 +1,20 @@
 //! Dense text embeddings.
 //!
-//! Generate `Vec<f32>` embeddings for text or batches of text. Select a
-//! checkpoint via `EmbeddingModel` (defaults to `MiniLmL12`). Inference is
-//! blocking; wrap it in `tokio::task::spawn_blocking` from async contexts.
+//! Generate `Vec<f32>` embeddings for text or batches of text.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use akuna_core::embedding::{EmbeddingModel, TextEmbedding, TextEmbeddingOptions};
+//! use akuna_core::embedding::{EmbeddingModel, TextEmbedder, TextEmbedderOptions};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let model = TextEmbedding::new(TextEmbeddingOptions {
+//!     let model = TextEmbedder::new(TextEmbedderOptions {
 //!         model: EmbeddingModel::MiniLmL12,
 //!         ..Default::default()
 //!     })
 //!     .await?;
 //!
-//!     // `embed` is blocking. In production, wrap heavy inference in
-//!     // `tokio::task::spawn_blocking` to avoid stalling async workers.
 //!     let single = model.embed("Hello world")?;
 //!     assert!(!single.is_empty());
 //!
@@ -30,6 +26,9 @@
 //! ```
 
 mod models;
+
+#[cfg(test)]
+mod tests;
 
 use std::path::PathBuf;
 
@@ -93,9 +92,9 @@ enum LoadedEmbeddingModel {
     XlmRoberta(XlmRobertaEmbeddingModel<Backend>),
 }
 
-/// Options for [`TextEmbedding`].
+/// Options for [`TextEmbedder`].
 #[derive(Debug, Clone, Default)]
-pub struct TextEmbeddingOptions {
+pub struct TextEmbedderOptions {
     /// Which embedding checkpoint to load.
     pub model: EmbeddingModel,
     /// Optional Hugging Face cache directory override.
@@ -103,22 +102,22 @@ pub struct TextEmbeddingOptions {
 }
 
 /// Text embedding model.
-pub struct TextEmbedding {
+pub struct TextEmbedder {
     model: LoadedEmbeddingModel,
     model_kind: EmbeddingModel,
     device: DispatchDevice,
 }
 
-impl TextEmbedding {
+impl TextEmbedder {
     /// Loads the embedding model from `options` onto the default device.
-    pub async fn new(options: TextEmbeddingOptions) -> Result<Self> {
+    pub async fn new(options: TextEmbedderOptions) -> Result<Self> {
         Self::new_on(backend::active_device(), options).await
     }
 
     /// Loads the embedding model from `options` onto a specific device.
     pub(crate) async fn new_on(
         device: DispatchDevice,
-        options: TextEmbeddingOptions,
+        options: TextEmbedderOptions,
     ) -> Result<Self> {
         let model_kind = options.model;
         let repo_id = model_kind.repo_id();
@@ -250,151 +249,5 @@ impl TextEmbedding {
     /// Returns the loaded embedding checkpoint.
     pub fn model(&self) -> EmbeddingModel {
         self.model_kind
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ml::backend::{Backend, cpu_device};
-    use burn::tensor::Tensor;
-    use std::sync::OnceLock;
-    use tokio::sync::Mutex;
-
-    static LIVE_MODEL_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    #[test]
-    fn api_model_metadata_returns_bge_repo_ids() {
-        assert_eq!(
-            EmbeddingModel::BgeSmallEnV15.repo_id(),
-            "BAAI/bge-small-en-v1.5"
-        );
-        assert_eq!(
-            EmbeddingModel::BgeBaseEnV15.repo_id(),
-            "BAAI/bge-base-en-v1.5"
-        );
-        assert_eq!(
-            EmbeddingModel::BgeLargeEnV15.repo_id(),
-            "BAAI/bge-large-en-v1.5"
-        );
-        assert_eq!(
-            EmbeddingModel::AllMpnetBaseV2.repo_id(),
-            "sentence-transformers/all-mpnet-base-v2"
-        );
-        assert_eq!(EmbeddingModel::BgeM3.repo_id(), "BAAI/bge-m3");
-    }
-
-    #[test]
-    fn api_options_default_uses_minilm_l12() {
-        assert_eq!(
-            TextEmbeddingOptions::default().model,
-            EmbeddingModel::MiniLmL12
-        );
-    }
-
-    #[tokio::test]
-    async fn model_bge_small_embed_returns_document_and_query_vectors() {
-        let _guard = live_model_test_lock().lock().await;
-        let model = TextEmbedding::new(TextEmbeddingOptions {
-            model: EmbeddingModel::BgeSmallEnV15,
-            ..Default::default()
-        })
-        .await
-        .expect("model should load");
-
-        let document = model
-            .embed("Hello world")
-            .expect("document embed should work");
-        let query =
-            model.embed("Hello world").expect("query embed should work");
-
-        assert_eq!(document.len(), 384);
-        assert_eq!(query.len(), 384);
-    }
-
-    #[tokio::test]
-    async fn model_minilm_l6_backend_supports_i32_indices() {
-        let _guard = live_model_test_lock().lock().await;
-        let model = TextEmbedding::new_on(
-            cpu_device(),
-            TextEmbeddingOptions {
-                model: EmbeddingModel::MiniLmL6,
-                cache_dir: None,
-            },
-        )
-        .await
-        .expect("model should load");
-
-        let single = model
-            .embed("Hello world")
-            .expect("single embed should work");
-        assert!(!single.is_empty());
-    }
-
-    #[tokio::test]
-    async fn model_minilm_l6_embed_returns_vectors() {
-        let _guard = live_model_test_lock().lock().await;
-        let model = TextEmbedding::new(TextEmbeddingOptions {
-            model: EmbeddingModel::MiniLmL6,
-            ..Default::default()
-        })
-        .await
-        .expect("model should load");
-
-        let single = model
-            .embed("Hello world")
-            .expect("single embed should work");
-        assert!(!single.is_empty());
-
-        let batch = model
-            .embed_batch(&["Hello world", "Rust embeddings"], None)
-            .expect("batch embed should work");
-        assert_eq!(batch.len(), 2);
-        assert!(batch.iter().all(|embedding| !embedding.is_empty()));
-    }
-
-    #[test]
-    fn util_batch_size_default_caps_large_batches() {
-        let batch_size = resolve_batch_size(128, None, DEFAULT_BATCH_SIZE)
-            .expect("default batch size should work");
-        assert_eq!(batch_size, DEFAULT_BATCH_SIZE);
-    }
-
-    #[test]
-    fn util_batch_size_default_uses_document_count_when_small() {
-        let batch_size = resolve_batch_size(4, None, DEFAULT_BATCH_SIZE)
-            .expect("default batch size should work");
-        assert_eq!(batch_size, 4);
-    }
-
-    #[test]
-    fn util_batch_size_validate_rejects_zero() {
-        let error = resolve_batch_size(1, Some(0), DEFAULT_BATCH_SIZE)
-            .expect_err("zero batch size should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("batch size must be greater than zero")
-        );
-    }
-
-    #[test]
-    fn util_tensor_rows_extract_returns_rows() {
-        let device = cpu_device();
-        let embeddings = Tensor::<Backend, 2>::from_floats(
-            [[1.0, 2.0], [3.0, 4.0]],
-            &device,
-        );
-
-        let rows = tensor2_to_rows_f32(
-            embeddings,
-            "failed to read embedding output tensor",
-        )
-        .expect("rows should extract");
-        assert_eq!(rows, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
-    }
-
-    fn live_model_test_lock() -> &'static Mutex<()> {
-        LIVE_MODEL_TEST_LOCK.get_or_init(|| Mutex::new(()))
     }
 }

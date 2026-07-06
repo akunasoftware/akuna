@@ -28,7 +28,7 @@ impl ExtractCommand {
 
         let full = !self.metadata && !self.text && !self.parts;
 
-        let extraction = akuna_core::extraction::document::from_path(
+        let extraction = akuna_core::extraction::extract_file(
             &self.file,
             &akuna_core::extraction::ExtractionConfig {
                 return_metadata: full || self.metadata,

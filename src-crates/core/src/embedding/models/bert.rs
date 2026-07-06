@@ -239,7 +239,7 @@ pub(crate) fn prompt_sentences<'a>(
         .collect()
 }
 
-/// Loads a pretrained BERT-family embedding model from Hugging Face.
+/// Loads a BERT-family embedding model.
 pub(crate) async fn load_pretrained_bert_embedding<B>(
     device: &B::Device,
     repo_id: &str,
@@ -281,7 +281,7 @@ where
     })
 }
 
-/// Downloads config, weights, and tokenizer for a Hugging Face model.
+/// Resolves default BERT-family model assets.
 pub(crate) async fn download_hf_model(
     repo_id: &str,
     cache_dir: Option<PathBuf>,
@@ -290,7 +290,7 @@ pub(crate) async fn download_hf_model(
         .await
 }
 
-/// Downloads config, weights, and tokenizer using a custom weights file name.
+/// Resolves BERT-family model assets.
 pub(crate) async fn download_hf_model_with_weights(
     repo_id: &str,
     weights_file: &str,
@@ -300,7 +300,7 @@ pub(crate) async fn download_hf_model_with_weights(
         .await
 }
 
-/// Reads `max_seq_length` from an optional `sentence_bert_config.json`.
+/// Returns the configured sentence length limit.
 pub(crate) fn sentence_transformers_max_length(
     path: Option<&Path>,
 ) -> Result<Option<usize>> {

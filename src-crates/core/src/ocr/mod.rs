@@ -1,16 +1,16 @@
 //! Image OCR: run text detection and recognition over page images.
 //!
-//! Configure the pipeline with `OcrDetector` and `OcrRecognizer`; any
-//! detector may be paired with any recognizer. Domain extraction structures
-//! live in [`crate::extraction`].
+//! Configure the pipeline with `OcrDetectionModel` and `OcrRecognitionModel`;
+//! any detection model may be paired with any recognition model. Domain
+//! extraction structures live in [`crate::extraction`].
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use akuna_core::ocr::{Ocr, OcrOptions};
+//! use akuna_core::ocr::{OcrEngine, OcrEngineOptions};
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! let ocr = Ocr::new(OcrOptions::default()).await?;
+//! let ocr = OcrEngine::new(OcrEngineOptions::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -40,14 +40,14 @@ pub use output::{OcrBlock, OcrBlockKind, OcrPage, OcrRect};
     serde::Serialize,
     utoipa::ToSchema,
 )]
-pub enum OcrDetector {
+pub enum OcrDetectionModel {
     /// PaddleOCR PP-OCRv6 tiny detector.
-    PpOcrV6TinyDet,
+    PpOcrV6Tiny,
     /// PaddleOCR PP-OCRv6 small detector.
-    PpOcrV6SmallDet,
+    PpOcrV6Small,
     /// PaddleOCR PP-OCRv6 medium detector.
     #[default]
-    PpOcrV6MediumDet,
+    PpOcrV6Medium,
 }
 
 /// Text recognition strategy.
@@ -62,23 +62,23 @@ pub enum OcrDetector {
     serde::Serialize,
     utoipa::ToSchema,
 )]
-pub enum OcrRecognizer {
+pub enum OcrRecognitionModel {
     /// PaddleOCR PP-OCRv6 tiny recognizer.
-    PpOcrV6TinyRec,
+    PpOcrV6Tiny,
     /// PaddleOCR PP-OCRv6 small recognizer.
-    PpOcrV6SmallRec,
+    PpOcrV6Small,
     /// PaddleOCR PP-OCRv6 medium recognizer.
     #[default]
-    PpOcrV6MediumRec,
+    PpOcrV6Medium,
 }
 
-impl std::fmt::Display for OcrDetector {
+impl std::fmt::Display for OcrDetectionModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
 }
 
-impl std::fmt::Display for OcrRecognizer {
+impl std::fmt::Display for OcrRecognitionModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
@@ -86,35 +86,35 @@ impl std::fmt::Display for OcrRecognizer {
 
 /// Options for OCR model loading and inference.
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
-pub struct OcrOptions {
+pub struct OcrEngineOptions {
     /// Region detector used before recognition.
-    pub detector: OcrDetector,
+    pub detection_model: OcrDetectionModel,
     /// Text recognizer used after detection.
-    pub recognizer: OcrRecognizer,
+    pub recognition_model: OcrRecognitionModel,
     /// Optional model download cache directory.
     pub cache_dir: Option<std::path::PathBuf>,
 }
 
 /// OCR engine that detects and recognizes text in page images.
-pub struct Ocr {
+pub struct OcrEngine {
     model: Box<PpOcrRuntime<Backend>>,
     device: DispatchDevice,
 }
 
-impl Ocr {
+impl OcrEngine {
     /// Loads OCR models from `options` onto the auto-selected device.
-    pub async fn new(options: OcrOptions) -> Result<Self, OcrError> {
+    pub async fn new(options: OcrEngineOptions) -> Result<Self, OcrError> {
         Self::new_on(backend::active_device(), options).await
     }
 
     /// Loads OCR models from `options` onto a specific device.
     pub(crate) async fn new_on(
         device: DispatchDevice,
-        options: OcrOptions,
+        options: OcrEngineOptions,
     ) -> Result<Self, OcrError> {
         let model = PpOcrRuntime::load(
-            options.detector,
-            options.recognizer,
+            options.detection_model,
+            options.recognition_model,
             &device,
             options.cache_dir,
         )
@@ -128,7 +128,7 @@ impl Ocr {
     }
 
     /// Extracts OCR blocks from an image file.
-    pub fn extract_page_file(
+    pub fn extract_file(
         &self,
         path: impl AsRef<Path>,
     ) -> Result<OcrPage, OcrError> {
@@ -139,14 +139,11 @@ impl Ocr {
                 source,
             })?;
 
-        self.extract_page_bytes(&bytes)
+        self.extract_bytes(&bytes)
     }
 
     /// Extracts OCR blocks from encoded image bytes.
-    pub fn extract_page_bytes(
-        &self,
-        bytes: &[u8],
-    ) -> Result<OcrPage, OcrError> {
+    pub fn extract_bytes(&self, bytes: &[u8]) -> Result<OcrPage, OcrError> {
         let image = image::load_from_memory(bytes)
             .map_err(|source| OcrError::DecodeImage { source })?;
         self.model
@@ -154,8 +151,8 @@ impl Ocr {
             .map_err(|source| OcrError::Inference { source })
     }
 
-    /// Returns the configured detector and recognizer.
-    pub fn pipeline(&self) -> (OcrDetector, OcrRecognizer) {
-        (self.model.detector, self.model.recognizer)
+    /// Returns the configured detection and recognition models.
+    pub fn pipeline(&self) -> (OcrDetectionModel, OcrRecognitionModel) {
+        (self.model.detection_model, self.model.recognition_model)
     }
 }

@@ -1,17 +1,19 @@
 //! Document extraction entry points.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
 use tokio::io::AsyncWriteExt;
 
 use crate::extraction::{
-    DocumentContent, ExtractionConfig, ExtractionMetadata, ExtractionResult,
-    FileExtractionError, extractors, metadata,
+    DocumentContent, ExtractionConfig, ExtractionMetadata,
+    ExtractionPipelineStepKind, ExtractionResult, FileExtractionError,
+    extractors, metadata, pipeline,
 };
 
 /// Extract content and metadata from a document path.
-pub async fn from_path(
+pub async fn extract_file(
     file_path: &Path,
     config: &ExtractionConfig,
 ) -> Result<ExtractionResult, FileExtractionError> {
@@ -21,7 +23,15 @@ pub async fn from_path(
     from_bytes_with_source_path(&bytes, Some(file_path), config).await
 }
 
-/// Extract content and metadata from bytes with optional source path.
+/// Extract content and metadata from encoded document bytes.
+pub async fn extract_bytes(
+    bytes: &[u8],
+    config: &ExtractionConfig,
+) -> Result<ExtractionResult, FileExtractionError> {
+    from_bytes_with_source_path(bytes, None, config).await
+}
+
+// Shared extraction path for both owned bytes and files.
 async fn from_bytes_with_source_path(
     bytes: &[u8],
     source_path: Option<&Path>,
@@ -35,10 +45,19 @@ async fn from_bytes_with_source_path(
         config.return_metadata || config.return_content || config.return_parts;
     let need_content = config.return_content || config.return_parts;
 
-    let metadata = if need_metadata {
-        Some(metadata::from_bytes(bytes, source_path)?)
+    let (metadata, mut pipeline) = if need_metadata {
+        let started = std::time::Instant::now();
+        let metadata = metadata::from_bytes(bytes, source_path)?;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let step = pipeline::step(
+            ExtractionPipelineStepKind::Detection,
+            "magika",
+            duration_ms,
+            HashMap::new(),
+        );
+        (Some(metadata), vec![step])
     } else {
-        None
+        (None, Vec::new())
     };
 
     let content =
@@ -58,10 +77,9 @@ async fn from_bytes_with_source_path(
     } else {
         None
     };
-    let pipeline = content
-        .as_ref()
-        .map(|content| content.pipeline.clone())
-        .unwrap_or_default();
+    if let Some(content) = content.as_ref() {
+        pipeline.extend(content.pipeline.clone());
+    }
 
     Ok(ExtractionResult {
         metadata: returned_metadata,
@@ -71,7 +89,7 @@ async fn from_bytes_with_source_path(
     })
 }
 
-/// Build normalized internal document content from raw text.
+// Normalize extracted text into the public content shape.
 fn content_from_text(
     text: impl Into<String>,
     metadata: &ExtractionMetadata,
@@ -84,7 +102,7 @@ fn content_from_text(
     DocumentContent::from_text(text)
 }
 
-/// Route detected document content to the right extractor.
+// Dispatch by detected type.
 async fn extract_content(
     bytes: &[u8],
     source_path: Option<&Path>,
@@ -94,7 +112,8 @@ async fn extract_content(
     match metadata.mime_type.as_str() {
         // PDF documents use structural page extraction.
         "application/pdf" => {
-            let file_path = temporary_content_file(bytes, source_path).await?;
+            let file_path =
+                temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
             extractors::pdf::extract(&file_path)
         }
@@ -104,20 +123,22 @@ async fn extract_content(
         | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =>
         {
-            let file_path = temporary_content_file(bytes, source_path).await?;
+            let file_path =
+                temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
             extractors::office::extract(&file_path)
         }
 
         // EPUB needs chapter rendering before text normalization.
         "application/epub+zip" => {
-            let file_path = temporary_content_file(bytes, source_path).await?;
+            let file_path =
+                temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
             extractors::text::extract_epub(&file_path)
                 .map(|text| content_from_text(text, metadata))
         }
 
-        // Markup/text container formats use omniparse text extraction.
+        // Markup/text container formats need text normalization.
         "application/rss+xml"
         | "application/xhtml+xml"
         | "application/xml"
@@ -125,6 +146,11 @@ async fn extract_content(
         | "text/markdown"
         | "text/xml" => extractors::text::extract_bytes(metadata, bytes)
             .map(|text| content_from_text(text, metadata)),
+
+        mime_type if mime_type.ends_with("+xml") => {
+            extractors::text::extract_bytes(metadata, bytes)
+                .map(|text| content_from_text(text, metadata))
+        }
 
         // Known archive formats are not treated as text fallbacks.
         "application/zip" | "application/vnd.oasis.opendocument.text" => {
@@ -134,7 +160,8 @@ async fn extract_content(
         // Images use OCR when the feature is enabled.
         #[cfg(feature = "ocr")]
         "image/bmp" | "image/jpeg" | "image/png" | "image/tiff" => {
-            let file_path = temporary_content_file(bytes, source_path).await?;
+            let file_path =
+                temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
             extractors::ocr::extract(&file_path, &config.ocr).await
         }
@@ -150,13 +177,14 @@ async fn extract_content(
     }
 }
 
-/// Write content bytes to temporary file for path-backed extractors.
+// Some extractors require a path.
 async fn temporary_content_file(
     bytes: &[u8],
     source_path: Option<&Path>,
+    metadata: &ExtractionMetadata,
 ) -> Result<PathBuf, FileExtractionError> {
     for attempt in 0..100_u8 {
-        let file_path = temporary_content_path(source_path, attempt);
+        let file_path = temporary_content_path(source_path, metadata, attempt);
         let file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -183,13 +211,13 @@ async fn temporary_content_file(
     })
 }
 
-/// Temporary path bridge for extractor libraries that require filesystem input.
+// Removes temporary files when path-backed extraction finishes.
 struct TemporaryFileCleanup {
     path: PathBuf,
 }
 
 impl TemporaryFileCleanup {
-    /// Track temporary file for cleanup at scope exit.
+    // Track temporary file for cleanup at scope exit.
     fn new(path: PathBuf) -> Self {
         Self { path }
     }
@@ -201,18 +229,26 @@ impl Drop for TemporaryFileCleanup {
     }
 }
 
-/// Build unique temporary content path for byte-backed extraction.
-fn temporary_content_path(source_path: Option<&Path>, attempt: u8) -> PathBuf {
+// Build a temporary content path.
+fn temporary_content_path(
+    source_path: Option<&Path>,
+    metadata: &ExtractionMetadata,
+    attempt: u8,
+) -> PathBuf {
     let extension = source_path
         .and_then(Path::extension)
-        .map(|extension| extension.to_string_lossy());
+        .map(|extension| extension.to_string_lossy().to_string())
+        .or_else(|| metadata.extension.clone())
+        .or_else(|| {
+            extension_from_mime(&metadata.mime_type).map(str::to_string)
+        });
     let file_name = format!(
         "extraction-{}-{}-{}{}",
         std::process::id(),
         unique_suffix(),
         attempt,
         extension
-            .as_deref()
+            .as_ref()
             .map(|extension| format!(".{extension}"))
             .unwrap_or_default()
     );
@@ -220,7 +256,27 @@ fn temporary_content_path(source_path: Option<&Path>, attempt: u8) -> PathBuf {
     std::env::temp_dir().join(file_name)
 }
 
-/// Return best-effort unique suffix for temporary file names.
+// Returns an extension for path-based extractors when input bytes have no path.
+fn extension_from_mime(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "application/pdf" => Some("pdf"),
+        "application/msword" => Some("doc"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+            Some("pptx")
+        }
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+            Some("docx")
+        }
+        "application/epub+zip" => Some("epub"),
+        "image/bmp" => Some("bmp"),
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/tiff" => Some("tiff"),
+        _ => None,
+    }
+}
+
+// Best-effort unique suffix for temporary file names.
 fn unique_suffix() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -228,7 +284,7 @@ fn unique_suffix() -> u128 {
         .unwrap_or_default()
 }
 
-/// Confirm path exists, is readable file, and has non-zero size.
+// Validate file input before extraction.
 fn validate_path(file_path: &Path) -> Result<(), FileExtractionError> {
     if !file_path.exists() {
         return Err(FileExtractionError::Io {
@@ -255,7 +311,7 @@ fn validate_path(file_path: &Path) -> Result<(), FileExtractionError> {
     Ok(())
 }
 
-/// Build unsupported type error from detected metadata.
+// Preserve detected metadata on unsupported type errors.
 fn unsupported_file_type(metadata: &ExtractionMetadata) -> FileExtractionError {
     FileExtractionError::UnsupportedFileType {
         metadata: Box::new(metadata.clone()),

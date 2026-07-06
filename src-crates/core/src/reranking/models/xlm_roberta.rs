@@ -212,7 +212,7 @@ impl<B: Backend> XlmRobertaRerankerModel<B> {
     }
 }
 
-/// Loads a pretrained XLM-RoBERTa reranker model onto `device`.
+/// Loads an XLM-RoBERTa reranker model.
 pub(crate) async fn load_pretrained_xlm_roberta_reranker<B>(
     device: &B::Device,
     repo_id: &str,

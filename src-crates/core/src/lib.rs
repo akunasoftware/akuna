@@ -5,14 +5,18 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use akuna_core::extraction::{document, ExtractionConfig};
-//!
-//! # async fn example() -> Result<(), akuna_core::extraction::FileExtractionError> {
-//! let result = document::from_path("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
+//! ```no_run
+//! # #[cfg(feature = "extraction")]
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use akuna_core::extraction::{extract_file, ExtractionConfig};
+//! let result = extract_file("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
+
+/// Shared crate-local test helpers.
+#[cfg(all(test, feature = "extraction"))]
+mod testkit;
 
 /// File-type detection APIs.
 #[cfg(feature = "detection")]

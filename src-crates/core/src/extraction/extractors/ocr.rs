@@ -3,34 +3,30 @@ use std::path::Path;
 
 use crate::extraction::{
     DocumentContent, ExtractionBbox, ExtractionPart, ExtractionPipelineStep,
-    FileExtractionError, PartKind, pipeline, provenance,
+    ExtractionPipelineStepKind, FileExtractionError, PartKind, pipeline,
+    provenance,
 };
 
 /// Extract OCR parts from image files.
 pub(in crate::extraction) async fn extract(
     file_path: &Path,
-    ocr_options: &crate::ocr::OcrOptions,
+    ocr_options: &crate::ocr::OcrEngineOptions,
 ) -> Result<DocumentContent, FileExtractionError> {
-    let ocr = crate::ocr::Ocr::new(ocr_options.clone())
+    let ocr = crate::ocr::OcrEngine::new(ocr_options.clone())
         .await
         .map_err(ocr_extraction_error)?;
     let (_detector, recognizer) = ocr.pipeline();
 
     let started = std::time::Instant::now();
-    let page = ocr
-        .extract_page_file(file_path)
-        .map_err(ocr_extraction_error)?;
+    let page = ocr.extract_file(file_path).map_err(ocr_extraction_error)?;
     let duration_ms = started.elapsed().as_millis() as u64;
 
     let block_count = page.blocks.len();
     let pipeline = vec![pipeline::step(
-        "ocr",
+        ExtractionPipelineStepKind::Recognition,
         recognizer.to_string(),
         duration_ms,
-        HashMap::from([
-            ("regions".to_owned(), block_count),
-            ("texts".to_owned(), block_count),
-        ]),
+        HashMap::from([("texts".to_owned(), block_count as u64)]),
     )];
 
     Ok(from_ocr_page(&page, pipeline))

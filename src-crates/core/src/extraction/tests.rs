@@ -1,29 +1,24 @@
-//! Extraction tests confirming expected text content is retrieved
-//! from all fixture files containing known text
-#![cfg(feature = "extraction")]
-
-#[path = "common.rs"]
-mod common;
-
-use crate::common::CorpusFixture;
-use akuna_core::extraction::{
-    ExtractionConfig, FileExtractionError, PartKind, document,
-};
 use std::path::PathBuf;
 
+use super::{
+    ExtractionConfig, ExtractionMetadata, FileExtractionError, PartKind,
+    extract_bytes, extract_file,
+};
+
+/// Fetches an extraction fixture from the shared corpus.
 fn get_extraction_fixture(name: &str) -> PathBuf {
-    CorpusFixture::new(format!("content/fixtures/{name}").as_str())
-        .get()
+    crate::testkit::corpus_fixture(name)
         .expect("Could not fetch {name} in corpus fixtures")
 }
 
+/// Asserts a fixture extracts expected text.
 async fn assert_extracts_text(
     file_name: &str,
     expected_text: &str,
 ) -> Result<(), FileExtractionError> {
     let file_path = get_extraction_fixture(file_name);
 
-    let extraction = document::from_path(
+    let extraction = extract_file(
         &file_path,
         &ExtractionConfig {
             return_content: true,
@@ -62,7 +57,7 @@ macro_rules! unsupported_format_test {
         #[tokio::test]
         async fn $test_name() -> Result<(), FileExtractionError> {
             let file_path = get_extraction_fixture($file_name);
-            let error = match document::from_path(
+            let error = match extract_file(
                 &file_path,
                 &ExtractionConfig {
                     return_content: true,
@@ -94,6 +89,19 @@ macro_rules! unsupported_format_test {
 
 const SAMPLE_TEXT: &str = "life is but an instant; his substance";
 const SAMPLE_CODE: &str = "extraction fixture marker: shared code sample";
+
+/// Builds test-only extraction metadata.
+fn test_metadata(mime_type: &str) -> ExtractionMetadata {
+    ExtractionMetadata {
+        stem: None,
+        extension: None,
+        label: "test".to_string(),
+        mime_type: mime_type.to_string(),
+        description: "test".to_string(),
+        is_text: true,
+        hash: "test".to_string(),
+    }
+}
 
 // Supported document formats
 extract_from_files!(SAMPLE_TEXT;
@@ -139,7 +147,7 @@ unsupported_format_test!(unsupported_zip, "text.txt.zip");
 #[tokio::test]
 async fn extracts_text_with_metadata() -> Result<(), FileExtractionError> {
     let file_path = get_extraction_fixture("text.txt");
-    let extraction = document::from_path(
+    let extraction = extract_file(
         &file_path,
         &ExtractionConfig {
             return_content: true,
@@ -159,9 +167,85 @@ async fn extracts_text_with_metadata() -> Result<(), FileExtractionError> {
 }
 
 #[tokio::test]
+async fn extracts_bytes_without_path_metadata()
+-> Result<(), FileExtractionError> {
+    let data = b"life is but an instant; his substance is fleeting\n";
+    let extraction = extract_bytes(
+        data,
+        &ExtractionConfig {
+            return_content: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let metadata = extraction.metadata.expect("bytes should return metadata");
+
+    assert_eq!(metadata.extension, None);
+    assert_eq!(metadata.stem, None);
+    assert!(extraction.text.is_some_and(|text| text.contains("instant")));
+
+    Ok(())
+}
+
+#[test]
+fn extracts_markup_bytes_as_text() -> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("text/html"),
+        b"<article><h1>Title</h1><p>life &amp; substance</p></article>",
+    )?;
+
+    assert_eq!(text, "Title life & substance");
+    Ok(())
+}
+
+#[test]
+fn extracts_xml_suffix_bytes_as_text() -> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("application/rdf+xml"),
+        b"<rdf><label>life &amp; substance</label></rdf>",
+    )?;
+
+    assert_eq!(text, "life & substance");
+    Ok(())
+}
+
+#[test]
+fn extracts_markup_bytes_without_over_decoding_entities()
+-> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("text/html"),
+        b"<p>&amp;lt;tag&amp;gt; &lt;real&gt;</p>",
+    )?;
+
+    assert_eq!(text, "&lt;tag&gt; <real>");
+    Ok(())
+}
+
+#[tokio::test]
+async fn extracts_office_bytes_without_path_extension()
+-> Result<(), FileExtractionError> {
+    let bytes = tokio::fs::read(get_extraction_fixture("text.docx")).await?;
+    let extraction = extract_bytes(
+        &bytes,
+        &ExtractionConfig {
+            return_content: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    assert!(
+        extraction
+            .text
+            .is_some_and(|text| text.contains(SAMPLE_TEXT))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn extracts_metadata_without_text() -> Result<(), FileExtractionError> {
     let file_path = get_extraction_fixture("text.pptx");
-    let extraction = document::from_path(
+    let extraction = extract_file(
         &file_path,
         &ExtractionConfig {
             return_metadata: true,
@@ -184,7 +268,7 @@ async fn extracts_metadata_without_text() -> Result<(), FileExtractionError> {
 async fn returns_top_level_parts_without_text()
 -> Result<(), FileExtractionError> {
     let file_path = get_extraction_fixture("text.txt");
-    let extraction = document::from_path(
+    let extraction = extract_file(
         &file_path,
         &ExtractionConfig {
             return_parts: true,
@@ -216,7 +300,7 @@ async fn returns_parts_for_syntax_text_fixtures()
         "text.xml",
     ] {
         let file_path = get_extraction_fixture(file_name);
-        let extraction = document::from_path(
+        let extraction = extract_file(
             &file_path,
             &ExtractionConfig {
                 return_parts: true,
@@ -235,35 +319,33 @@ async fn returns_parts_for_syntax_text_fixtures()
 #[cfg(feature = "ocr")]
 #[test]
 fn extracts_png_with_ocr() {
-    let handle = std::thread::Builder::new()
-        .stack_size(128 * 1024 * 1024)
-        .spawn(|| {
-            let runtime = tokio::runtime::Runtime::new()
-                .expect("tokio runtime should start");
-            runtime.block_on(async {
-                let file_path = get_extraction_fixture("text-hidpi.png");
-                let extraction = document::from_path(
-                    &file_path,
-                    &ExtractionConfig {
-                        return_content: true,
-                        return_parts: true,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .expect("OCR extraction should succeed");
+    crate::testkit::run_with_model_stack(|| {
+        let runtime =
+            tokio::runtime::Runtime::new().expect("tokio runtime should start");
+        runtime.block_on(async {
+            let file_path = get_extraction_fixture("text-hidpi.png");
+            let extraction = extract_file(
+                &file_path,
+                &ExtractionConfig {
+                    return_content: true,
+                    return_parts: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("OCR extraction should succeed");
 
-                assert!(
-                    extraction
-                        .text
-                        .is_some_and(|text| text.contains("On Looking Inward"))
-                );
-                let parts = extraction.parts.expect("OCR should return parts");
-                assert!(parts.len() > 1);
-                assert!(parts.iter().all(|part| part.kind == PartKind::Text));
-            });
-        })
-        .expect("OCR test thread should start");
+            assert!(
+                extraction
+                    .text
+                    .is_some_and(|text| text.contains("On Looking Inward"))
+            );
+            let parts = extraction.parts.expect("OCR should return parts");
+            assert!(parts.len() > 1);
+            assert!(parts.iter().all(|part| part.kind == PartKind::Text));
+        });
 
-    handle.join().expect("OCR test thread should finish");
+        Ok(())
+    })
+    .expect("OCR test thread should finish");
 }

@@ -1,5 +1,4 @@
-//! Reusable native-burn building blocks for CNN and transformer models loaded
-//! from HuggingFace `safetensors`.
+//! Shared neural network building blocks.
 #![allow(dead_code, clippy::too_many_arguments)]
 
 use anyhow::{Context, Result, bail};
@@ -14,7 +13,7 @@ use crate::ml::safe_matmul;
 
 // ---- raw safetensors readers ----------------------------------------------
 
-/// Reads a tensor's raw f32 values, validating dtype and shape.
+/// Loads f32 tensor values.
 pub(crate) fn read_f32_values(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -40,7 +39,7 @@ pub(crate) fn read_f32_values(
         .collect())
 }
 
-/// Reads a 1-D f32 tensor (BN params, biases, norm weights).
+/// Loads a 1-D f32 tensor.
 pub(crate) fn read_vec<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -53,7 +52,7 @@ pub(crate) fn read_vec<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Reads a conv weight `[out, in/groups, kh, kw]` in native burn layout.
+/// Loads a 2-D convolution weight tensor.
 pub(crate) fn read_conv_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -69,9 +68,7 @@ pub(crate) fn read_conv_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Reads a 1-D conv weight stored as `[out, in/groups, k]` and returns it as a
-/// 2-D conv weight `[out, in/groups, 1, k]` (the model applies these as height-1
-/// Conv2d).
+/// Loads a 1-D convolution weight as a 2-D convolution weight.
 pub(crate) fn read_conv1d_as_conv2d_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -88,7 +85,7 @@ pub(crate) fn read_conv1d_as_conv2d_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Reads a transposed-conv weight `[in, out/groups, kh, kw]`.
+/// Loads a transposed-convolution weight tensor.
 pub(crate) fn read_conv_transpose_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -104,8 +101,7 @@ pub(crate) fn read_conv_transpose_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Reads a linear weight stored as `[out, in]` and returns it transposed to
-/// `[in, out]` for `x @ w`.
+/// Loads a linear layer weight tensor.
 pub(crate) fn read_linear_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -215,8 +211,7 @@ pub(crate) fn batch_norm_inference<B: Backend<FloatElem = f32>>(
 
 const BN_EPS: f64 = 1e-5;
 
-/// Inference-mode BatchNorm2d over the channel axis, loaded from
-/// `{prefix}.{weight,bias,running_mean,running_var}`.
+/// Batch normalization layer for inference.
 #[derive(Debug)]
 pub(crate) struct BatchNorm2dLayer<B: Backend> {
     weight: Tensor<B, 1>,

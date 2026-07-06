@@ -7,7 +7,9 @@ use burn::tensor::{
 use safetensors::{Dtype, SafeTensors};
 
 #[cfg(test)]
-use crate::detection::{Detection, RankedAlternative};
+use crate::detection::tests::{
+    Detection, alternative_for_content_type, detection_for_content_type,
+};
 use crate::detection::{
     FileType,
     models::magika_preprocess::{PreparedInput, prepare_input},
@@ -647,74 +649,4 @@ fn label_for_index(
             std::mem::transmute::<u32, vendor_model::Label>(index as u32)
         },
     )
-}
-
-#[cfg(test)]
-fn detection_for_content_type(content_type: ContentType) -> Detection {
-    let alternative = alternative_for_content_type(content_type, 1.0);
-
-    Detection {
-        label: alternative.label.clone(),
-        mime_type: alternative.mime_type.clone(),
-        confidence: alternative.confidence,
-        alternatives: vec![alternative],
-    }
-}
-
-#[cfg(test)]
-fn alternative_for_content_type(
-    content_type: ContentType,
-    confidence: f32,
-) -> RankedAlternative {
-    let info = content_type.info();
-
-    RankedAlternative {
-        label: info.label.to_string(),
-        mime_type: Some(info.mime_type.to_string()),
-        confidence,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ml::backend::{Backend, cpu_device};
-
-    use super::MagikaModel;
-
-    #[test]
-    fn classifier_batch_is_deterministic() {
-        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build classifier");
-
-        let a = classifier
-            .detect_bytes(b"abcdef")
-            .expect("first inference should succeed");
-        let b = classifier
-            .detect_bytes(b"abcdef")
-            .expect("second inference should succeed");
-        assert_eq!(a, b);
-
-        let batch = classifier
-            .detect_batch(vec![b"a", b"b", b"c"])
-            .expect("batch inference should succeed");
-        assert_eq!(batch.len(), 3);
-    }
-
-    #[test]
-    fn embedded_model_builds() {
-        MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build embedded model");
-    }
-
-    #[test]
-    fn explicit_top_k_is_applied() {
-        let classifier = MagikaModel::<Backend>::from_embedded(&cpu_device())
-            .expect("build model")
-            .with_top_k(5);
-
-        let detection = classifier
-            .detect_bytes(b"function greet() { return 'hi'; }")
-            .expect("detect bytes");
-        assert_eq!(detection.alternatives.len(), 5);
-    }
 }

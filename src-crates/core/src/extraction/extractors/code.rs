@@ -1,6 +1,6 @@
 use crate::extraction::{
-    DocumentContent, ExtractionMetadata, ExtractionPart, PartKind, pipeline,
-    provenance,
+    DocumentContent, ExtractionMetadata, ExtractionPart,
+    ExtractionPipelineStepKind, PartKind, pipeline, provenance,
 };
 use std::collections::HashMap;
 
@@ -39,10 +39,10 @@ pub(in crate::extraction) fn extract(
         canonical_text: Some(text.to_owned()),
         parts,
         pipeline: vec![pipeline::step(
-            "parsing",
+            ExtractionPipelineStepKind::Parsing,
             "tree-sitter",
             duration_ms,
-            HashMap::from([("parts".to_owned(), part_count)]),
+            HashMap::from([("parts".to_owned(), part_count as u64)]),
         )],
     })
 }

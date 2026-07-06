@@ -101,12 +101,12 @@ pub(in crate::extraction) fn extract(
             canonical_text: Some(text),
             parts,
             pipeline: vec![pipeline::step(
-                "parsing",
+                crate::extraction::ExtractionPipelineStepKind::Parsing,
                 "pdf_oxide",
                 duration_ms,
                 HashMap::from([
-                    ("pages".to_owned(), page_count),
-                    ("parts".to_owned(), part_count),
+                    ("pages".to_owned(), page_count as u64),
+                    ("parts".to_owned(), part_count as u64),
                 ]),
             )],
         });

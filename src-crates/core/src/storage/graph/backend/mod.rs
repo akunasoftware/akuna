@@ -1,4 +1,4 @@
-//! Graph storage backend implementations.
+//! Graph storage backend support.
 
 mod grafeo;
 

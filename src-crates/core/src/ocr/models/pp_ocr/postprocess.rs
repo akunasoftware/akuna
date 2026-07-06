@@ -2,7 +2,7 @@ use anyhow::Result;
 use burn::tensor::{Tensor, backend::Backend};
 
 use crate::ocr::models::pp_ocr::spec::{
-    PpOcrDetectorConfig, PpOcrRecognizerConfig,
+    PpOcrDetectionConfig, PpOcrRecognitionConfig,
 };
 
 const MIN_COMPONENT_AREA_RATIO: f32 = 0.00002;
@@ -11,7 +11,6 @@ const MIN_COMPONENT_SIDE: usize = 3;
 #[derive(Debug, Clone)]
 pub(crate) struct TextBox {
     pub(crate) points: [[f32; 2]; 4],
-    pub(crate) score: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -22,7 +21,7 @@ pub(crate) struct RecognizedText {
 
 pub(crate) fn postprocess_detector<B: Backend<FloatElem = f32>>(
     prob_map: Tensor<B, 4>,
-    config: &PpOcrDetectorConfig,
+    config: &PpOcrDetectionConfig,
     original_width: u32,
     original_height: u32,
 ) -> Result<Vec<TextBox>> {
@@ -99,6 +98,7 @@ pub(crate) fn postprocess_detector<B: Backend<FloatElem = f32>>(
             (max_x + 1) as f32,
             (max_y + 1) as f32,
             config.db_unclip_ratio,
+            count as f32,
         );
         let right_limit = width as f32;
         let bottom_limit = height as f32;
@@ -118,21 +118,20 @@ pub(crate) fn postprocess_detector<B: Backend<FloatElem = f32>>(
                 [right, bottom],
                 [left, bottom],
             ],
-            score,
         });
         if boxes.len() >= config.max_candidates {
             break;
         }
     }
 
-    boxes.sort_by(reading_order);
+    sort_boxes(&mut boxes);
     Ok(boxes)
 }
 
 pub(crate) fn postprocess_recognizer<B: Backend<FloatElem = f32>>(
     logits: Tensor<B, 3>,
     dictionary: &[String],
-    config: &PpOcrRecognizerConfig,
+    config: &PpOcrRecognitionConfig,
 ) -> Result<RecognizedText> {
     let [_batch, dim1, dim2] = logits.dims();
     let values = logits.into_data().to_vec::<f32>()?;
@@ -153,8 +152,10 @@ pub(crate) fn postprocess_recognizer<B: Backend<FloatElem = f32>>(
         });
     }
 
-    let mut indices = Vec::with_capacity(steps);
+    let mut decoded = String::new();
     let mut confidence_sum = 0.0;
+    let mut confidence_count = 0usize;
+    let mut previous_index = None;
     for step in 0..steps {
         let mut best_index = 0usize;
         let mut best_score = f32::NEG_INFINITY;
@@ -170,13 +171,24 @@ pub(crate) fn postprocess_recognizer<B: Backend<FloatElem = f32>>(
                 best_index = class_index;
             }
         }
-        indices.push(best_index);
-        confidence_sum += best_score;
+        if best_index != 0
+            && Some(best_index) != previous_index
+            && let Some(value) = dictionary.get(best_index - 1)
+        {
+            decoded.push_str(value);
+            confidence_sum += best_score;
+            confidence_count += 1;
+        }
+        previous_index = Some(best_index);
     }
 
     Ok(RecognizedText {
-        text: ctc_decode_indices(indices, dictionary),
-        confidence: confidence_sum / steps as f32,
+        text: decoded,
+        confidence: if confidence_count == 0 {
+            0.0
+        } else {
+            confidence_sum / confidence_count as f32
+        },
     })
 }
 
@@ -202,72 +214,46 @@ fn expand_rect(
     right: f32,
     bottom: f32,
     ratio: f32,
+    area: f32,
 ) -> (f32, f32, f32, f32) {
-    let center_x = (left + right) * 0.5;
-    let center_y = (top + bottom) * 0.5;
-    let half_width = (right - left) * ratio * 0.5;
-    let half_height = (bottom - top) * ratio * 0.5;
+    let width = right - left;
+    let height = bottom - top;
+    let perimeter = 2.0 * (width + height);
+    if perimeter <= 0.0 {
+        return (left, top, right, bottom);
+    }
+
+    let distance = area * ratio / perimeter;
 
     (
-        center_x - half_width,
-        center_y - half_height,
-        center_x + half_width,
-        center_y + half_height,
+        left - distance,
+        top - distance,
+        right + distance,
+        bottom + distance,
     )
 }
 
-fn reading_order(left: &TextBox, right: &TextBox) -> std::cmp::Ordering {
-    let (left_x, left_y, _left_width, left_height) = box_bounds(left);
-    let (right_x, right_y, _right_width, right_height) = box_bounds(right);
-    let line_tolerance = (left_height.min(right_height) * 0.5).max(8.0);
+fn sort_boxes(boxes: &mut [TextBox]) {
+    boxes.sort_by(|left, right| {
+        let left_top = left.points[0];
+        let right_top = right.points[0];
+        left_top[1]
+            .total_cmp(&right_top[1])
+            .then_with(|| left_top[0].total_cmp(&right_top[0]))
+    });
 
-    if (left_y - right_y).abs() <= line_tolerance {
-        return left_x.total_cmp(&right_x);
-    }
-
-    left_y.total_cmp(&right_y)
-}
-
-fn box_bounds(text_box: &TextBox) -> (f32, f32, f32, f32) {
-    let min_x = text_box
-        .points
-        .iter()
-        .map(|point| point[0])
-        .fold(f32::INFINITY, f32::min);
-    let min_y = text_box
-        .points
-        .iter()
-        .map(|point| point[1])
-        .fold(f32::INFINITY, f32::min);
-    let max_x = text_box
-        .points
-        .iter()
-        .map(|point| point[0])
-        .fold(f32::NEG_INFINITY, f32::max);
-    let max_y = text_box
-        .points
-        .iter()
-        .map(|point| point[1])
-        .fold(f32::NEG_INFINITY, f32::max);
-
-    (min_x, min_y, max_x - min_x, max_y - min_y)
-}
-
-pub(crate) fn ctc_decode_indices(
-    indices: impl IntoIterator<Item = usize>,
-    dictionary: &[String],
-) -> String {
-    let mut previous = None;
-    let mut text = String::new();
-    for index in indices {
-        if index == 0 || Some(index) == previous {
-            previous = Some(index);
-            continue;
+    for index in 0..boxes.len().saturating_sub(1) {
+        for previous in (0..=index).rev() {
+            let next_top = boxes[previous + 1].points[0];
+            let current_top = boxes[previous].points[0];
+            // PaddleOCR's sorted_boxes uses a fixed 10px row tolerance.
+            if (next_top[1] - current_top[1]).abs() < 10.0
+                && next_top[0] < current_top[0]
+            {
+                boxes.swap(previous, previous + 1);
+            } else {
+                break;
+            }
         }
-        if let Some(value) = dictionary.get(index - 1) {
-            text.push_str(value);
-        }
-        previous = Some(index);
     }
-    text
 }

@@ -1,7 +1,6 @@
 [package]
 name = "akuna"
 description = "Command-line interface for knowledge tools"
-readme = "README.md"
 authors.workspace = true
 repository.workspace = true
 version.workspace = true

@@ -1,21 +1,23 @@
+use std::path::Path;
+
 use burn_dispatch::DispatchDevice;
 
 use crate::detection::models::magika::MagikaModel;
 use crate::detection::{FileType, MagikaInferenceError};
 use crate::ml::backend::{self, Backend};
 
-/// A file-type detection session ready to classify inputs.
-pub struct Session {
+/// Detects file types from bytes and files.
+pub struct FileTypeDetector {
     model: MagikaModel<Backend>,
 }
 
-impl Session {
-    /// Builds a session on the default device.
+impl FileTypeDetector {
+    /// Builds a detector on the default device.
     pub fn new() -> Result<Self, MagikaInferenceError> {
         Self::new_on(backend::active_device())
     }
 
-    /// Builds a session on a specific device.
+    /// Builds a detector on a specific device.
     pub(crate) fn new_on(
         device: DispatchDevice,
     ) -> Result<Self, MagikaInferenceError> {
@@ -24,10 +26,19 @@ impl Session {
     }
 
     /// Identifies the file type of raw bytes (blocking).
-    pub fn identify_content_sync(
+    pub fn identify_bytes(
         &self,
         bytes: &[u8],
     ) -> Result<FileType, MagikaInferenceError> {
         self.model.identify_bytes(bytes)
+    }
+
+    /// Identifies the file type of a file path (blocking).
+    pub fn identify_file(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<FileType, MagikaInferenceError> {
+        let bytes = std::fs::read(path).map_err(MagikaInferenceError::Io)?;
+        self.identify_bytes(&bytes)
     }
 }

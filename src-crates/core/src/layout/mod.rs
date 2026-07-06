@@ -1,20 +1,13 @@
 //! Detects reading-order layout blocks (text, title, list, table, figure) from
 //! page images, independently of OCR.
 //!
-//! # Models
-//!
-//! Select a checkpoint via [`LayoutModel`][crate::layout::LayoutModel]
-//! (defaults to `PpDocLayoutV3`):
-//!
-//! - `PpDocLayoutV3` — `PaddlePaddle/PP-DocLayoutV3_safetensors`
-//!
 //! # Example
 //!
 //! ```rust,no_run
-//! use akuna_core::layout::{LayoutDetector, LayoutOptions};
+//! use akuna_core::layout::{LayoutDetector, LayoutDetectorOptions};
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! let detector = LayoutDetector::new(LayoutOptions::default()).await?;
+//! let detector = LayoutDetector::new(LayoutDetectorOptions::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -41,7 +34,7 @@ pub enum LayoutModel {
 
 /// Layout detector options.
 #[derive(Debug, Clone, Default)]
-pub struct LayoutOptions {
+pub struct LayoutDetectorOptions {
     /// Which layout checkpoint to load.
     pub model: LayoutModel,
     /// Optional model download cache directory.
@@ -133,14 +126,16 @@ pub struct LayoutDetector {
 
 impl LayoutDetector {
     /// Loads the layout detector from `options`.
-    pub async fn new(options: LayoutOptions) -> Result<Self, LayoutError> {
+    pub async fn new(
+        options: LayoutDetectorOptions,
+    ) -> Result<Self, LayoutError> {
         Self::new_on(backend::active_device(), options).await
     }
 
     /// Loads the layout detector from `options` onto a specific device.
     pub(crate) async fn new_on(
         device: DispatchDevice,
-        options: LayoutOptions,
+        options: LayoutDetectorOptions,
     ) -> Result<Self, LayoutError> {
         let runtime = match options.model {
             LayoutModel::PpDocLayoutV3 => {

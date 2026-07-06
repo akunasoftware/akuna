@@ -6,20 +6,23 @@ use anyhow::{Context, Result, bail};
 use burn::tensor::{Tensor, backend::Backend};
 use hf_hub::api::tokio::ApiBuilder;
 
-/// Runtime backend and device selection, shared by every ML module.
+/// Shared ML backend selection.
 pub(crate) mod backend;
 
-/// Reusable native-burn layers loaded from safetensors.
+/// Shared neural network layers.
 #[cfg(feature = "layout")]
 pub(crate) mod burn_nn;
 
-/// cv2-compatible image preprocessing.
+/// Image preprocessing helpers.
 #[cfg(any(feature = "layout", feature = "ocr"))]
 pub(crate) mod imageproc;
 
 /// A BERT-style transformer encoder used by embedding and reranking.
 #[cfg(any(feature = "embedding", feature = "reranking"))]
 pub(crate) mod transformer;
+
+#[cfg(test)]
+mod tests;
 
 /// Contraction-dim chunk size for [`safe_matmul`].
 pub(crate) const SAFE_MATMUL_K: usize = 256;
@@ -51,7 +54,7 @@ pub(crate) fn safe_matmul<B: Backend, const D: usize>(
     acc.expect("safe_matmul K > 0")
 }
 
-/// Local filesystem paths to common Hugging Face model files.
+/// Resolved model asset paths.
 #[derive(Debug, Clone)]
 pub(crate) struct HfModelFiles {
     pub(crate) config_path: PathBuf,
@@ -60,7 +63,7 @@ pub(crate) struct HfModelFiles {
     pub(crate) sentence_bert_config_path: Option<PathBuf>,
 }
 
-/// Downloads common Hugging Face model files into the local cache.
+/// Resolves required model assets.
 pub(crate) async fn download_hf_model_files(
     repo_id: &str,
     weights_file: &str,
@@ -98,7 +101,7 @@ pub(crate) async fn download_hf_model_files(
     })
 }
 
-/// Reads and deserializes a JSON config file, tagging errors with `what`.
+/// Loads a JSON model config.
 #[cfg(any(feature = "embedding", feature = "reranking"))]
 pub(crate) fn load_json_config<T: serde::de::DeserializeOwned>(
     path: &std::path::Path,

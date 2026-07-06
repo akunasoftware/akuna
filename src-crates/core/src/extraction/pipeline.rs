@@ -2,17 +2,17 @@
 
 use std::collections::HashMap;
 
-use crate::extraction::ExtractionPipelineStep;
+use crate::extraction::{ExtractionPipelineStep, ExtractionPipelineStepKind};
 
 /// Build pipeline step with output counts.
 pub(in crate::extraction) fn step(
-    step: &str,
+    step: ExtractionPipelineStepKind,
     engine: impl Into<String>,
     duration_ms: u64,
-    outputs: HashMap<String, usize>,
+    outputs: HashMap<String, u64>,
 ) -> ExtractionPipelineStep {
     ExtractionPipelineStep {
-        step: step.to_owned(),
+        step,
         engine: engine.into(),
         duration_ms,
         outputs,

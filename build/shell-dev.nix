@@ -112,8 +112,8 @@ pkgs.mkShell {
 
       # language & framework tools
       rustToolChain
+      uv # python project/test runner
       cargo-bloat # rust binary size inspection
-      cargo-nextest # rust test runner with nicer interface
       cargo-machete # rust dependency redundancy checker
       cargo-deny # rust dependency license checker
       sccache # rust compilation cache

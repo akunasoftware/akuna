@@ -145,7 +145,7 @@ impl<B: Backend<FloatElem = f32>> IntraclassBlock<B> {
 
 /// Native PP-OCRv6 medium detector.
 #[derive(Debug)]
-pub(crate) struct PpOcrDetectorMedium<B: Backend> {
+pub(crate) struct PpOcrTextDetectorMedium<B: Backend> {
     stem1: ConvLayer<B>,
     stem2a: ConvLayer<B>,
     stem2b: ConvLayer<B>,
@@ -164,7 +164,7 @@ pub(crate) struct PpOcrDetectorMedium<B: Backend> {
     conv_final: ConvTransposeLayer<B>,
 }
 
-impl<B: Backend<FloatElem = f32>> PpOcrDetectorMedium<B> {
+impl<B: Backend<FloatElem = f32>> PpOcrTextDetectorMedium<B> {
     pub(crate) fn from_safetensors(
         tensors: &SafeTensors<'_>,
         device: &B::Device,

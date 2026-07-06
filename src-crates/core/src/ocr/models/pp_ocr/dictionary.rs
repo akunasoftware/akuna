@@ -3,12 +3,12 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use hf_hub::{Repo, RepoType, api::tokio::ApiBuilder};
 
-use crate::ocr::models::pp_ocr::spec::PpOcrRecognizerConfig;
+use crate::ocr::models::pp_ocr::spec::PpOcrRecognitionConfig;
 
 const INFERENCE_CONFIG_FILE: &str = "inference.yml";
 
 pub(crate) async fn load_dictionary(
-    config: &PpOcrRecognizerConfig,
+    config: &PpOcrRecognitionConfig,
     cache_dir: Option<&Path>,
 ) -> Result<Vec<String>> {
     let mut builder = ApiBuilder::new().with_progress(true);
