@@ -34,7 +34,8 @@ silently can't compile).
 ```rust
 /// Options for [`Index`].
 pub struct IndexOptions {
-    pub path: Option<PathBuf>,                  // None = ephemeral (temp root, same layout)
+    pub name: String,                           // storage subpath under the data root; default "default"
+    pub path: Option<PathBuf>,                  // data root; None = ephemeral (temp root, same layout)
     pub embedding_model: EmbeddingModel,        // used for chunks and titles
     pub reranking_model: Option<RerankingModel>,// None disables; Default = Some(default model)
     pub fulltext: bool,                         // default true — gates both BM25 functions
@@ -44,10 +45,13 @@ pub struct IndexOptions {
 }
 ```
 
-Manual `Default` (reranking ON). Dense retrieval is always on and has no
-toggle. Disabled functions create no storage/indexes: `graph: false` opens
-no graph context; `fulltext: false` opens the vector context without FTS
-indexes.
+Manual `Default` (reranking ON, `name: "default"`). One data root hosts
+many indexes: the storage root for an index is `<path>/<name>` (and
+`<temp>/<name>` in ephemeral mode — same layout rule). `name` is
+validated at `new`: non-empty, no path separators or traversal — typed
+error otherwise. Dense retrieval is always on and has no toggle. Disabled
+functions create no storage/indexes: `graph: false` opens no graph
+context; `fulltext: false` opens the vector context without FTS indexes.
 
 Record shapes (public; FFI mirrors 1:1). These are HTTP/OpenAPI surface in
 step 09, so derive `Serialize`/`Deserialize` + `utoipa::ToSchema` here
@@ -132,19 +136,20 @@ Pinned behaviors:
   temp root (struct field order matters).
 - **Metadata round-trip:** `Metadata` is a plain map; absent-vs-empty is
   not distinguished — `get` returns an empty map where nothing was stored.
-- **Manifest** (every root, ephemeral included): `manifest.json` with
-  `schema_version` (start 1), `embedding_model`, `chunking`, `fulltext`,
-  `graph`. `reranking_model` is deliberately excluded — it affects no
+- **Manifest** (every storage root `<path>/<name>`, ephemeral included):
+  `manifest.json` with `schema_version` (start 1), `embedding_model`,
+  `chunking`, `fulltext`, `graph`. (`name` itself is not in the manifest —
+  it IS the subpath.) `reranking_model` is deliberately excluded — it affects no
   stored data and may change freely across reopen. `Index::new` on an
   existing root errors clearly, naming the field, on any mismatch
   (embeddings from different models are not comparable; mixed chunk
   geometries are silently wrong). Missing/corrupt manifest in a non-empty
   root → error. Serialize via the manifest module mapping enums to
   strings — don't force serde derives onto `EmbeddingModel` just for this.
-- **Ephemeral mode:** temp root owned by the `Index`, removed on drop,
-  identical layout (`manifest.json`, `vector/`, `graph/` subdirs). Use the
-  persistent grafeo path under the temp root, not grafeo's in-memory mode
-  — same-layout rule.
+- **Ephemeral mode:** temp data root owned by the `Index`, removed on
+  drop, identical layout (`<temp>/<name>/` containing `manifest.json`,
+  `vector/`, `graph/`). Use the persistent grafeo path under the temp
+  root, not grafeo's in-memory mode — same-layout rule.
 
 FFI (`src-crates/ffi/src/index.rs`, registered in `ffi/src/lib.rs`):
 

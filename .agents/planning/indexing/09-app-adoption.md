@@ -32,13 +32,23 @@ in `app` on top of core, never in core.
 `env!("CARGO_PKG_NAME")` or a crate-root constant per AGENTS.md's rebrand
 rule) and fix the `setup_tracing` call site to use it. Implement data-dir
 resolution the way the prior implementation in the **akuna-old** project
-does it — consult that repo for the reference. If akuna-old is not
-accessible, do NOT block: default to the `directories` crate's
-`ProjectDirs` data dir derived from the app-name constant alone (empty
-qualifier/organization), note the divergence in the PR, and let the owner
-reconcile. Either way this is a new workspace dependency (no dirs-class
-crate exists today). Root the persistent index at `<data_dir>/knowledge`,
-replacing the cwd-relative constant pattern.
+does it — consult that repo for the reference, with two owner-directed
+deviations:
+
+- akuna-old assumed a single app context; here one data root hosts many
+  indexes. The app resolves only the platform data ROOT for the app name;
+  `Index` derives its own subpath from `IndexOptions.name` (step 05). The
+  app passes `path: Some(<data_root>)`, `name: "knowledge"`.
+- akuna-old also had a config dir and config handling — ignore all of it.
+  No config dir, no config files, keep it slim; that's not happening any
+  time soon.
+
+If akuna-old is not accessible, do NOT block: default to the `directories`
+crate's `ProjectDirs` data dir derived from the app-name constant alone
+(empty qualifier/organization), note the divergence in the PR, and let the
+owner reconcile. Either way this is a new workspace dependency (no
+dirs-class crate exists today). This replaces the cwd-relative constant
+pattern.
 
 **State and startup.** `ApiState { index: Arc<Index> }`. The `Index` is
 built once at server startup (async, loads models, fail-fast with context)

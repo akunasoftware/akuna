@@ -85,9 +85,11 @@ Rust API is async; the app server is async). The graph trait stays sync
   indexes are only created when enabled); `graph` gates graph storage and
   expansion entirely. Disabled functions cost nothing.
 - Reranking is ON by default.
-- `path: None` → ephemeral storage (temp root, identical layout).
-  `path: Some(dir)` → persistent storage rooted there, with a manifest
-  guarding config compatibility on reopen.
+- Every index has a `name`; one data root hosts many indexes, each stored
+  under `<root>/<name>`. `path: None` → ephemeral storage (temp root,
+  identical layout). `path: Some(dir)` → persistent storage at
+  `<dir>/<name>`, with a manifest guarding config compatibility on
+  reopen.
 
 ## Conventions
 
