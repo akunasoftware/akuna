@@ -16,8 +16,7 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [dependencies]
-akuna-core = { version = "0.2.0", path = "../core", features = ["full"] }
-image.workspace = true
+akuna-core = { workspace = true, features = ["full"] }
 thiserror.workspace = true
 tokio.workspace = true
 uniffi = { version = "0.32.0", default-features = false, features = ["tokio"] }

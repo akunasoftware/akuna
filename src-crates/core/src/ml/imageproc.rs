@@ -6,6 +6,7 @@ const COEF_BITS: u32 = 11;
 const COEF_SCALE: i64 = 1 << COEF_BITS; // 2048
 
 /// Per-output-pixel bilinear taps: `(src0, src1, w0, w1)` at 2048-scale.
+#[cfg(feature = "ocr")]
 fn linear_coeffs(dst: usize, src: usize) -> Vec<(usize, usize, i64, i64)> {
     let scale = src as f64 / dst as f64;
     let coef = COEF_SCALE as f32;
@@ -35,11 +36,13 @@ fn linear_coeffs(dst: usize, src: usize) -> Vec<(usize, usize, i64, i64)> {
 }
 
 /// Saturating cast to the `i16` range.
+#[cfg(feature = "ocr")]
 fn sat16(value: i32) -> i32 {
     value.clamp(-32768, 32767)
 }
 
 /// Resizes an image with linear interpolation.
+#[cfg(feature = "ocr")]
 pub(crate) fn resize_linear_cv2(
     image: &DynamicImage,
     dst_w: usize,

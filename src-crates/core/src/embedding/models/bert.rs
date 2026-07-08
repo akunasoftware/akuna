@@ -40,27 +40,6 @@ struct BertConfig {
     layer_norm_eps: f64,
 }
 
-/// Subset of `sentence_bert_config.json` read by this crate.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct SentenceBertConfig {
-    max_seq_length: Option<usize>,
-}
-
-impl SentenceBertConfig {
-    /// Reads a `sentence_bert_config.json` file from disk.
-    pub(crate) fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        crate::ml::load_json_config(
-            path.as_ref(),
-            "sentence-transformers config",
-        )
-    }
-
-    /// Configured maximum sequence length, if set.
-    pub(crate) fn max_seq_length(&self) -> Option<usize> {
-        self.max_seq_length
-    }
-}
-
 #[derive(Debug)]
 struct BertOutput<B: Backend> {
     hidden_states: Tensor<B, 3>,
@@ -244,6 +223,7 @@ pub(crate) async fn load_pretrained_bert_embedding<B>(
     device: &B::Device,
     repo_id: &str,
     pooling: PoolingStrategy,
+    max_length: Option<usize>,
     cache_dir: Option<PathBuf>,
 ) -> Result<BertEmbeddingModel<B>>
 where
@@ -261,11 +241,9 @@ where
                 files.tokenizer_path.display()
             )
         })?;
-    let max_length = sentence_transformers_max_length(
-        files.sentence_bert_config_path.as_deref(),
-    )?
-    .unwrap_or(config.max_position_embeddings)
-    .min(config.max_position_embeddings);
+    let max_length = max_length
+        .unwrap_or(config.max_position_embeddings)
+        .min(config.max_position_embeddings);
     tokenizer
         .with_truncation(Some(TruncationParams {
             max_length,
@@ -298,15 +276,6 @@ pub(crate) async fn download_hf_model_with_weights(
 ) -> Result<HfModelFiles> {
     download_hf_model_files(repo_id, weights_file, cache_dir, "embedding model")
         .await
-}
-
-/// Returns the configured sentence length limit.
-pub(crate) fn sentence_transformers_max_length(
-    path: Option<&Path>,
-) -> Result<Option<usize>> {
-    path.map(SentenceBertConfig::load_from_hf)
-        .transpose()
-        .map(|config| config.and_then(|config| config.max_seq_length()))
 }
 
 fn load_pretrained_weights<B: Backend>(

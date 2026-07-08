@@ -1,36 +1,28 @@
 # Communication
 
-- Think like caveman. Talk like caveman. Don't waste token. (use caveman skill)
-- If user input is posed as question, do not assume to implement.
-- Focus on absolute simplicity / YAGNI. Don't make decisions or implementations before needed. Avoid technical debt.
+- Think caveman. Talk caveman. Don't waste token.
+- Question ≠ implement request.
+- YAGNI. Nothing before needed.
 
 # Project
 
-- Greenfield. No legacy/regression padding. Refactor and break when useful.
-- Repo-wide hard constraints live in project files.
-- Architecture principles live in `.agents/principles.md`; binding.
-- Never hardcode app name in code/docs. Read from constants or toml for rebrand safety.
+- No legacy padding. Break freely.
 
-# API Style
+# Docs
 
-- Actor types are agent nouns saying what they do, e.g. `TextEmbedder`, `TextReranker`, `LayoutDetector`, `OcrEngine`, `FileTypeDetector`.
-- Options structs are `<Actor>Options`.
-- Model enums stay domain-named, e.g. `EmbeddingModel`, `OcrDetectionModel`.
-- Byte/path method pairs are `<verb>_bytes` and `<verb>_file` in Rust; Python FFI uses `<verb>_path` for path variants.
-- Pipeline configuration is a flat plain-field options struct with defaults, not a builder.
+- Docs are authoritative.
+- `.agents/PRINCIPLES.md` — hard rules.
+- `.agents/CODESTYLE.md` — code conventions.
+- `.agents/ARCHITECTURE.md` — demanded shape.
 
 # Workspace
 
-- Monorepo uses nix.
-- Current shell is devshell.
-- Shell source: `build/shell-dev.nix`.
-- Use workspace scripts for checking/building:
-  - ./build/scripts/ws-all.sh # for all below scripts run in sequence
-    - ./build/scripts/ws-check.sh # faster, only check for problems
-    - ./build/scripts/ws-fix.sh # fast, auto-fix where possible with linters
-    - ./build/scripts/ws-test.sh # slow and exhaustive, runs all tests
-
-# Documentation
-
-- Keep docstrings consistent in nature, be concise and descriptive of purpose/intent
-- Ensure docstrings exist on all functions in file root, compiler cannot force but still need
+- Devshell: `nix develop`.
+- Done = `./build/scripts/ws-check.sh` + `ws-test.sh`; FFI also
+  `ws-parity.sh`. `ws-fix.sh` auto-fixes; `ws-all.sh` = everything.
+- No watch-mode tools — they hang the CLI. No diagnostic-suppression
+  directives without consent.
+- Compile/test runs are expensive: agents implement first; orchestrator runs
+  one integration check, then sends failures back to owners.
+- Never manually download models; use the shared cache and workspace gates.
+- Fix all errors before stopping.

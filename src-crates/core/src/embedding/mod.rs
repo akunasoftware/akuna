@@ -25,6 +25,7 @@
 //! }
 //! ```
 
+mod error;
 mod models;
 
 #[cfg(test)]
@@ -32,7 +33,7 @@ mod tests;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use burn_dispatch::DispatchDevice;
 
 use crate::embedding::models::bert::{
@@ -46,6 +47,10 @@ use crate::embedding::models::xlm_roberta::{
 };
 use crate::ml::backend::{self, Backend};
 use crate::ml::{resolve_batch_size, tensor2_to_rows_f32};
+
+pub use error::EmbeddingError;
+
+type Result<T> = std::result::Result<T, EmbeddingError>;
 
 /// Default batch size when the caller does not supply one.
 const DEFAULT_BATCH_SIZE: usize = 32;
@@ -126,14 +131,21 @@ impl TextEmbedder {
         // backbones with a single checkpoint each.
         let model: LoadedEmbeddingModel = match model_kind {
             EmbeddingModel::MiniLmL6 | EmbeddingModel::MiniLmL12 => {
+                let max_length = match model_kind {
+                    EmbeddingModel::MiniLmL6 => 256,
+                    EmbeddingModel::MiniLmL12 => 128,
+                    _ => unreachable!(),
+                };
                 LoadedEmbeddingModel::Bert(
                     load_pretrained_bert_embedding(
                         &device,
                         repo_id,
                         PoolingStrategy::Mean,
+                        Some(max_length),
                         options.cache_dir,
                     )
-                    .await?,
+                    .await
+                    .map_err(EmbeddingError::load)?,
                 )
             }
             EmbeddingModel::BgeSmallEnV15
@@ -143,17 +155,21 @@ impl TextEmbedder {
                     &device,
                     repo_id,
                     PoolingStrategy::Cls,
+                    None,
                     options.cache_dir,
                 )
-                .await?,
+                .await
+                .map_err(EmbeddingError::load)?,
             ),
             EmbeddingModel::AllMpnetBaseV2 => LoadedEmbeddingModel::Mpnet(
                 load_pretrained_mpnet_embedding(
                     &device,
                     repo_id,
+                    384,
                     options.cache_dir,
                 )
-                .await?,
+                .await
+                .map_err(EmbeddingError::load)?,
             ),
             EmbeddingModel::BgeM3 => LoadedEmbeddingModel::XlmRoberta(
                 load_pretrained_xlm_roberta_embedding(
@@ -161,7 +177,8 @@ impl TextEmbedder {
                     repo_id,
                     options.cache_dir,
                 )
-                .await?,
+                .await
+                .map_err(EmbeddingError::load)?,
             ),
         };
 
@@ -184,25 +201,29 @@ impl TextEmbedder {
         }
 
         let batch_size =
-            resolve_batch_size(inputs.len(), batch_size, DEFAULT_BATCH_SIZE)?;
+            resolve_batch_size(inputs.len(), batch_size, DEFAULT_BATCH_SIZE)
+                .map_err(EmbeddingError::inference)?;
 
         let mut embeddings = Vec::with_capacity(inputs.len());
         for batch in inputs.chunks(batch_size) {
             let batch_embeddings = match &self.model {
-                LoadedEmbeddingModel::Bert(model) => {
-                    model.encode(batch, prompt, &self.device)?
-                }
-                LoadedEmbeddingModel::Mpnet(model) => {
-                    model.encode(batch, prompt, &self.device)?
-                }
-                LoadedEmbeddingModel::XlmRoberta(model) => {
-                    model.encode(batch, prompt, &self.device)?
-                }
+                LoadedEmbeddingModel::Bert(model) => model
+                    .encode(batch, prompt, &self.device)
+                    .map_err(EmbeddingError::inference)?,
+                LoadedEmbeddingModel::Mpnet(model) => model
+                    .encode(batch, prompt, &self.device)
+                    .map_err(EmbeddingError::inference)?,
+                LoadedEmbeddingModel::XlmRoberta(model) => model
+                    .encode(batch, prompt, &self.device)
+                    .map_err(EmbeddingError::inference)?,
             };
-            embeddings.extend(tensor2_to_rows_f32(
-                batch_embeddings,
-                "failed to read embedding output tensor",
-            )?);
+            embeddings.extend(
+                tensor2_to_rows_f32(
+                    batch_embeddings,
+                    "failed to read embedding output tensor",
+                )
+                .map_err(EmbeddingError::inference)?,
+            );
         }
 
         Ok(embeddings)
@@ -224,6 +245,7 @@ impl TextEmbedder {
         embeddings
             .pop()
             .context("expected one embedding for a single input document")
+            .map_err(EmbeddingError::inference)
     }
 
     /// Embeds documents in batches and returns one vector per input string.

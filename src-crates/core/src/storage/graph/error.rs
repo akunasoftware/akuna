@@ -7,9 +7,9 @@ type GraphErrorSource = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub enum GraphTarget {
     /// Graph node identified by labels and domain ID.
     Node {
-        /// Graph node labels searched.
+        /// Graph node labels used.
         labels: Vec<String>,
-        /// Domain ID searched.
+        /// Domain ID used.
         id: String,
     },
     /// Graph edge identified by relationship type and endpoint IDs.

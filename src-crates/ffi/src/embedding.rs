@@ -1,4 +1,14 @@
 //! Embedding bindings.
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), akuna_ffi::embedding::EmbeddingError> {
+//! let embedder = akuna_ffi::embedding::load_text_embedder(None).await?;
+//! let _embedding = embedder.embed("text".to_string())?;
+//! # Ok(())
+//! # }
+//! ```
+
+use std::path::PathBuf;
 
 use akuna_core::embedding as core_embedding;
 
@@ -37,6 +47,8 @@ pub enum EmbeddingModel {
 pub struct TextEmbedderOptions {
     /// Which embedding checkpoint to load.
     pub model: EmbeddingModel,
+    /// Optional Hugging Face cache directory override.
+    pub cache_dir: Option<String>,
 }
 
 /// Text embedding model.
@@ -50,42 +62,76 @@ pub struct TextEmbedder {
 pub async fn load_text_embedder(
     options: Option<TextEmbedderOptions>,
 ) -> Result<TextEmbedder, EmbeddingError> {
-    let inner = core_embedding::TextEmbedder::new(core_options(options))
-        .await
-        .map_err(to_error)?;
+    let inner = crate::stack::run_async(core_embedding::TextEmbedder::new(
+        core_options(options),
+    ))
+    .map_err(to_error)?
+    .map_err(to_error)?;
     Ok(TextEmbedder { inner })
 }
 
 #[uniffi::export]
 impl TextEmbedder {
-    /// Embeds one document with an optional prompt.
-    pub fn embed(
+    /// Embeds one document.
+    pub fn embed(&self, document: String) -> Result<Vec<f32>, EmbeddingError> {
+        crate::stack::run(|| self.inner.embed(document))
+            .map_err(to_error)?
+            .map_err(to_error)
+    }
+
+    /// Embeds one document with an input prompt.
+    pub fn embed_with_prompt(
         &self,
         document: String,
         prompt: Option<String>,
     ) -> Result<Vec<f32>, EmbeddingError> {
-        self.inner
-            .embed_with_prompt(document, prompt.as_deref())
+        crate::stack::run(|| {
+            self.inner.embed_with_prompt(document, prompt.as_deref())
+        })
+        .map_err(to_error)?
+        .map_err(to_error)
+    }
+
+    /// Embeds documents in batches.
+    pub fn embed_batch(
+        &self,
+        documents: Vec<String>,
+        batch_size: Option<u32>,
+    ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        let batch_size = batch_size
+            .map(usize::try_from)
+            .transpose()
+            .map_err(to_error)?;
+        crate::stack::run(|| self.inner.embed_batch(&documents, batch_size))
+            .map_err(to_error)?
             .map_err(to_error)
     }
 
-    /// Embeds documents in batches with an optional prompt.
-    pub fn embed_batch(
+    /// Embeds documents in batches with an input prompt.
+    pub fn embed_batch_with_prompt(
         &self,
         documents: Vec<String>,
         batch_size: Option<u32>,
         prompt: Option<String>,
     ) -> Result<Vec<Vec<f32>>, EmbeddingError> {
-        self.inner
-            .embed_batch_with_prompt(
+        let batch_size = batch_size
+            .map(usize::try_from)
+            .transpose()
+            .map_err(to_error)?;
+        crate::stack::run(|| {
+            self.inner.embed_batch_with_prompt(
                 &documents,
-                batch_size
-                    .map(usize::try_from)
-                    .transpose()
-                    .map_err(to_error)?,
+                batch_size,
                 prompt.as_deref(),
             )
-            .map_err(to_error)
+        })
+        .map_err(to_error)?
+        .map_err(to_error)
+    }
+
+    /// Returns the loaded embedding checkpoint.
+    pub fn model(&self) -> EmbeddingModel {
+        self.inner.model().into()
     }
 }
 
@@ -97,7 +143,7 @@ fn core_options(
         core_embedding::TextEmbedderOptions::default,
         |options| core_embedding::TextEmbedderOptions {
             model: options.model.into(),
-            cache_dir: None,
+            cache_dir: options.cache_dir.map(PathBuf::from),
         },
     )
 }
@@ -112,6 +158,26 @@ impl From<EmbeddingModel> for core_embedding::EmbeddingModel {
             EmbeddingModel::BgeLargeEnV15 => Self::BgeLargeEnV15,
             EmbeddingModel::AllMpnetBaseV2 => Self::AllMpnetBaseV2,
             EmbeddingModel::BgeM3 => Self::BgeM3,
+        }
+    }
+}
+
+impl From<core_embedding::EmbeddingModel> for EmbeddingModel {
+    fn from(model: core_embedding::EmbeddingModel) -> Self {
+        match model {
+            core_embedding::EmbeddingModel::MiniLmL6 => Self::MiniLmL6,
+            core_embedding::EmbeddingModel::MiniLmL12 => Self::MiniLmL12,
+            core_embedding::EmbeddingModel::BgeSmallEnV15 => {
+                Self::BgeSmallEnV15
+            }
+            core_embedding::EmbeddingModel::BgeBaseEnV15 => Self::BgeBaseEnV15,
+            core_embedding::EmbeddingModel::BgeLargeEnV15 => {
+                Self::BgeLargeEnV15
+            }
+            core_embedding::EmbeddingModel::AllMpnetBaseV2 => {
+                Self::AllMpnetBaseV2
+            }
+            core_embedding::EmbeddingModel::BgeM3 => Self::BgeM3,
         }
     }
 }

@@ -1,9 +1,19 @@
 //! Extraction bindings.
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), akuna_ffi::extraction::ExtractionError> {
+//! let _result = akuna_ffi::extraction::extract_bytes(b"text".to_vec(), None).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use akuna_core::extraction as core_extraction;
+
+use crate::detection::DetectionOrigin;
+use crate::ocr::OcrEngineOptions;
 
 /// Extraction adapter error.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -31,6 +41,8 @@ pub struct ExtractionOptions {
     pub return_content: bool,
     /// Return structured parts.
     pub return_parts: bool,
+    /// OCR configuration for image extraction.
+    pub ocr: OcrEngineOptions,
 }
 
 /// Extraction result.
@@ -61,6 +73,10 @@ pub struct ExtractionMetadata {
     pub description: String,
     /// Whether content is text-like.
     pub is_text: bool,
+    /// Detection confidence from 0 to 1.
+    pub confidence: f32,
+    /// Whether a rule or model resolved the file type.
+    pub origin: DetectionOrigin,
     /// Content hash.
     pub hash: String,
 }
@@ -213,23 +229,13 @@ where
     .try_into()
 }
 
-impl Default for ExtractionOptions {
-    fn default() -> Self {
-        Self {
-            return_metadata: true,
-            return_content: false,
-            return_parts: false,
-        }
-    }
-}
-
 impl From<ExtractionOptions> for core_extraction::ExtractionConfig {
     fn from(value: ExtractionOptions) -> Self {
         Self {
             return_metadata: value.return_metadata,
             return_content: value.return_content,
             return_parts: value.return_parts,
-            ..Default::default()
+            ocr: value.ocr.into(),
         }
     }
 }
@@ -270,6 +276,8 @@ impl From<core_extraction::ExtractionMetadata> for ExtractionMetadata {
             mime_type: value.mime_type,
             description: value.description,
             is_text: value.is_text,
+            confidence: value.confidence,
+            origin: value.origin.into(),
             hash: value.hash,
         }
     }
@@ -351,7 +359,7 @@ impl TryFrom<core_extraction::ExtractionPipelineStep>
             step: value.step.into(),
             engine: value.engine,
             duration_ms: value.duration_ms,
-            outputs: value.outputs,
+            outputs: value.outputs.into_iter().collect(),
         })
     }
 }

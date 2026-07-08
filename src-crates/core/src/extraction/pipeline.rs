@@ -1,6 +1,6 @@
 //! Shared extraction pipeline helpers.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::extraction::{ExtractionPipelineStep, ExtractionPipelineStepKind};
 
@@ -9,7 +9,7 @@ pub(in crate::extraction) fn step(
     step: ExtractionPipelineStepKind,
     engine: impl Into<String>,
     duration_ms: u64,
-    outputs: HashMap<String, u64>,
+    outputs: BTreeMap<String, u64>,
 ) -> ExtractionPipelineStep {
     ExtractionPipelineStep {
         step,

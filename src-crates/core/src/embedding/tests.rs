@@ -31,22 +31,28 @@ fn api_model_metadata_returns_repo_ids() {
     assert_eq!(EmbeddingModel::BgeM3.repo_id(), "BAAI/bge-m3");
 }
 
-#[tokio::test]
-async fn model_minilm_l6_can_embed_text() {
-    let model = TextEmbedder::new_on(
-        cpu_device(),
-        TextEmbedderOptions {
-            model: EmbeddingModel::MiniLmL6,
-            cache_dir: None,
-        },
-    )
-    .await
-    .expect("model should load");
+#[test]
+fn model_minilm_l6_can_embed_text() {
+    crate::testkit::run_with_model_stack(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                let model = TextEmbedder::new_on(
+                    cpu_device(),
+                    TextEmbedderOptions {
+                        model: EmbeddingModel::MiniLmL6,
+                        cache_dir: None,
+                    },
+                )
+                .await?;
 
-    let single = model
-        .embed("Hello world")
-        .expect("single embed should work");
-    assert!(!single.is_empty());
+                let single = model.embed("Hello world")?;
+                assert!(!single.is_empty());
+                Ok(())
+            })
+    })
+    .expect("model stack should run");
 }
 
 #[test]

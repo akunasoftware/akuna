@@ -3,20 +3,18 @@
 use std::sync::OnceLock;
 
 use burn_dispatch::{Dispatch, DispatchDevice};
-use burn_ndarray::NdArrayDevice;
-use burn_wgpu::WgpuDevice;
 
 /// Shared ML backend.
 pub(crate) type Backend = Dispatch;
 
 /// A CPU device.
 pub(crate) fn cpu_device() -> DispatchDevice {
-    DispatchDevice::NdArray(NdArrayDevice::default())
+    DispatchDevice::Flex(Default::default())
 }
 
 /// A GPU device.
 pub(crate) fn gpu_device() -> DispatchDevice {
-    DispatchDevice::Wgpu(WgpuDevice::default())
+    DispatchDevice::Wgpu(Default::default())
 }
 
 /// Default ML device.

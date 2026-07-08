@@ -233,13 +233,15 @@ fn expand_rect(
     )
 }
 
-fn sort_boxes(boxes: &mut [TextBox]) {
+pub(in crate::ocr) fn sort_boxes(boxes: &mut [TextBox]) {
     boxes.sort_by(|left, right| {
         let left_top = left.points[0];
         let right_top = right.points[0];
         left_top[1]
             .total_cmp(&right_top[1])
             .then_with(|| left_top[0].total_cmp(&right_top[0]))
+            .then_with(|| left.points[2][1].total_cmp(&right.points[2][1]))
+            .then_with(|| left.points[2][0].total_cmp(&right.points[2][0]))
     });
 
     for index in 0..boxes.len().saturating_sub(1) {

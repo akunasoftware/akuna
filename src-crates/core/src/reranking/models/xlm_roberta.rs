@@ -14,7 +14,9 @@ use serde::Deserialize;
 use tokenizers::{EncodeInput, Tokenizer, TruncationParams};
 
 use crate::ml::transformer::{BertEncoder, EncoderConfig, bert_encoder_remap};
-use crate::ml::{cls_pooling, download_hf_model_files};
+use crate::ml::{
+    cls_pooling, download_hf_model_files, xlm_roberta_position_ids,
+};
 
 type TokenizedPairs<B> = (Tensor<B, 2, Int>, Tensor<B, 2>, Tensor<B, 2, Int>);
 
@@ -28,6 +30,8 @@ struct XlmRobertaConfig {
     max_position_embeddings: usize,
     type_vocab_size: usize,
     layer_norm_eps: f64,
+    #[serde(default = "default_pad_token_id")]
+    pad_token_id: i32,
 }
 
 #[derive(Debug)]
@@ -70,6 +74,8 @@ pub(crate) struct XlmRobertaForSequenceClassification<B: Backend> {
 pub(crate) struct XlmRobertaRerankerModel<B: Backend> {
     pub(crate) model: XlmRobertaForSequenceClassification<B>,
     tokenizer: Tokenizer,
+    max_length: usize,
+    pad_token_id: i32,
 }
 
 impl XlmRobertaConfig {
@@ -132,20 +138,15 @@ impl<B: Backend> XlmRobertaEmbeddings<B> {
     fn forward(
         &self,
         input_ids: Tensor<B, 2, Int>,
-        token_type_ids: Option<Tensor<B, 2, Int>>,
+        position_ids: Tensor<B, 2, Int>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len] = input_ids.dims();
         let device = input_ids.device();
         let word_embeddings = self.word_embeddings.forward(input_ids);
-        let position_ids =
-            Tensor::<B, 1, Int>::arange(2..(seq_len as i64 + 2), &device)
-                .reshape([1, seq_len])
-                .expand([batch_size, seq_len]);
         let position_embeddings =
             self.position_embeddings.forward(position_ids);
-        let token_type_ids = token_type_ids.unwrap_or_else(|| {
-            Tensor::<B, 2, Int>::zeros([batch_size, seq_len], &device)
-        });
+        let token_type_ids =
+            Tensor::<B, 2, Int>::zeros([batch_size, seq_len], &device);
         let token_type_embeddings =
             self.token_type_embeddings.forward(token_type_ids);
         let embeddings =
@@ -160,9 +161,9 @@ impl<B: Backend> XlmRobertaModel<B> {
         &self,
         input_ids: Tensor<B, 2, Int>,
         attention_mask: Tensor<B, 2>,
-        token_type_ids: Option<Tensor<B, 2, Int>>,
+        position_ids: Tensor<B, 2, Int>,
     ) -> XlmRobertaOutput<B> {
-        let embeddings = self.embeddings.forward(input_ids, token_type_ids);
+        let embeddings = self.embeddings.forward(input_ids, position_ids);
         let device = attention_mask.device();
         let zeros = Tensor::<B, 2>::zeros(attention_mask.shape(), &device);
         let mask_pad: Tensor<B, 2, Bool> = attention_mask.equal(zeros);
@@ -178,10 +179,9 @@ impl<B: Backend> XlmRobertaForSequenceClassification<B> {
         &self,
         input_ids: Tensor<B, 2, Int>,
         attention_mask: Tensor<B, 2>,
-        token_type_ids: Option<Tensor<B, 2, Int>>,
+        position_ids: Tensor<B, 2, Int>,
     ) -> Tensor<B, 1> {
-        let output =
-            self.bert.forward(input_ids, attention_mask, token_type_ids);
+        let output = self.bert.forward(input_ids, attention_mask, position_ids);
         let pooled = cls_pooling(output.hidden_states);
         let logits = self.classifier.forward(pooled);
         let [batch_size, _] = logits.dims();
@@ -203,12 +203,15 @@ impl<B: Backend> XlmRobertaRerankerModel<B> {
         pairs: &[(&str, &str)],
         device: &B::Device,
     ) -> Result<Tensor<B, 1>> {
-        let (input_ids, attention_mask, token_type_ids) =
-            tokenize_pairs(&self.tokenizer, pairs, device)?;
+        let (input_ids, attention_mask, position_ids) = tokenize_pairs(
+            &self.tokenizer,
+            pairs,
+            self.max_length,
+            self.pad_token_id,
+            device,
+        )?;
 
-        Ok(self
-            .model
-            .forward(input_ids, attention_mask, Some(token_type_ids)))
+        Ok(self.model.forward(input_ids, attention_mask, position_ids))
     }
 }
 
@@ -241,13 +244,18 @@ where
         })?;
     tokenizer
         .with_truncation(Some(TruncationParams {
-            max_length: config.max_position_embeddings - 2,
+            max_length: config.max_position_embeddings.saturating_sub(2),
             ..Default::default()
         }))
         .map_err(|error| anyhow::anyhow!(error.to_string()))
         .context("failed to configure tokenizer truncation")?;
 
-    Ok(XlmRobertaRerankerModel { model, tokenizer })
+    Ok(XlmRobertaRerankerModel {
+        model,
+        tokenizer,
+        max_length: config.max_position_embeddings.saturating_sub(2),
+        pad_token_id: config.pad_token_id,
+    })
 }
 
 fn load_pretrained_weights<B: Backend>(
@@ -279,6 +287,8 @@ fn load_pretrained_weights<B: Backend>(
 fn tokenize_pairs<B: Backend>(
     tokenizer: &Tokenizer,
     pairs: &[(&str, &str)],
+    max_length: usize,
+    pad_token_id: i32,
     device: &B::Device,
 ) -> Result<TokenizedPairs<B>> {
     let inputs = pairs
@@ -295,29 +305,39 @@ fn tokenize_pairs<B: Backend>(
         .iter()
         .map(|encoding| encoding.get_ids().len())
         .max()
-        .unwrap_or(1);
+        .unwrap_or(1)
+        .min(max_length);
     let batch_size = pairs.len();
-    let mut input_ids = vec![0i32; batch_size * max_len];
+    let mut input_ids = vec![pad_token_id; batch_size * max_len];
     let mut attention_mask = vec![0.0f32; batch_size * max_len];
-    let mut token_type_ids = vec![0i32; batch_size * max_len];
 
     for (batch_index, encoding) in encodings.iter().enumerate() {
-        for (token_index, token_id) in encoding.get_ids().iter().enumerate() {
+        for (token_index, token_id) in
+            encoding.get_ids().iter().take(max_len).enumerate()
+        {
             let position = batch_index * max_len + token_index;
             input_ids[position] = *token_id as i32;
             attention_mask[position] =
                 encoding.get_attention_mask()[token_index] as f32;
-            token_type_ids[position] =
-                encoding.get_type_ids()[token_index] as i32;
         }
     }
 
+    let position_ids = xlm_roberta_position_ids(
+        &attention_mask,
+        batch_size,
+        max_len,
+        pad_token_id,
+    );
     Ok((
         Tensor::<B, 1, Int>::from_ints(input_ids.as_slice(), device)
             .reshape([batch_size, max_len]),
         Tensor::<B, 1>::from_floats(attention_mask.as_slice(), device)
             .reshape([batch_size, max_len]),
-        Tensor::<B, 1, Int>::from_ints(token_type_ids.as_slice(), device)
+        Tensor::<B, 1, Int>::from_ints(position_ids.as_slice(), device)
             .reshape([batch_size, max_len]),
     ))
+}
+
+fn default_pad_token_id() -> i32 {
+    1
 }

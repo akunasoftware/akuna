@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use super::{
-    ExtractionConfig, ExtractionMetadata, FileExtractionError, PartKind,
-    extract_bytes, extract_file,
+    DetectionOrigin, ExtractionConfig, ExtractionMetadata,
+    ExtractionPipelineStepKind, FileExtractionError, PartKind, extract_bytes,
+    extract_file,
 };
 
 /// Fetches an extraction fixture from the shared corpus.
@@ -99,6 +100,8 @@ fn test_metadata(mime_type: &str) -> ExtractionMetadata {
         mime_type: mime_type.to_string(),
         description: "test".to_string(),
         is_text: true,
+        confidence: 1.0,
+        origin: DetectionOrigin::Rule,
         hash: "test".to_string(),
     }
 }
@@ -182,7 +185,25 @@ async fn extracts_bytes_without_path_metadata()
 
     assert_eq!(metadata.extension, None);
     assert_eq!(metadata.stem, None);
+    assert!((0.0..=1.0).contains(&metadata.confidence));
     assert!(extraction.text.is_some_and(|text| text.contains("instant")));
+    assert_eq!(
+        extraction
+            .pipeline
+            .first()
+            .expect("detection should be audited")
+            .outputs
+            .get("types"),
+        Some(&1)
+    );
+    let direct = extraction
+        .pipeline
+        .iter()
+        .find(|step| step.engine == "direct")
+        .expect("direct parser should be audited");
+    assert_eq!(direct.step, ExtractionPipelineStepKind::Parsing);
+    assert!(direct.outputs.contains_key("parts"));
+    assert!(direct.outputs.contains_key("texts"));
 
     Ok(())
 }
@@ -218,6 +239,29 @@ fn extracts_markup_bytes_without_over_decoding_entities()
     )?;
 
     assert_eq!(text, "&lt;tag&gt; <real>");
+    Ok(())
+}
+
+#[test]
+fn extracts_markup_bytes_with_quoted_delimiters()
+-> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("text/html"),
+        b"<p title=\"a > b\">first</p><p title='c > d'>second</p>",
+    )?;
+
+    assert_eq!(text, "first second");
+    Ok(())
+}
+
+#[test]
+fn trims_decoded_markup_entities() -> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("text/html"),
+        b"<p>&nbsp; text &nbsp;</p>",
+    )?;
+
+    assert_eq!(text, "text");
     Ok(())
 }
 
@@ -314,6 +358,72 @@ async fn returns_parts_for_syntax_text_fixtures()
     }
 
     Ok(())
+}
+
+#[test]
+fn splits_plain_text_into_paragraph_parts() {
+    let content = super::types::DocumentContent::from_text(
+        " first paragraph\n\nsecond paragraph ".to_string(),
+    );
+
+    assert_eq!(content.parts.len(), 2);
+    assert!(
+        content
+            .parts
+            .iter()
+            .all(|part| part.kind == PartKind::Paragraph)
+    );
+    assert!(content.parts.iter().all(|part| part.provenance.is_some()));
+}
+
+#[test]
+fn multipart_text_keeps_source_ranges() {
+    let text = " first \n\nsecond ";
+    let content = super::types::DocumentContent::from_text(text.to_string());
+
+    assert_eq!(content.text().as_deref(), Some(text));
+    assert_eq!(content.parts[0].text.as_deref(), Some(" first "));
+    assert_eq!(content.parts[1].text.as_deref(), Some("second "));
+    assert_eq!(
+        content.parts[0]
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.byte_range.as_ref())
+            .map(|range| range.start..range.end),
+        Some(0..7)
+    );
+    assert_eq!(
+        content.parts[1]
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.byte_range.as_ref())
+            .map(|range| range.start..range.end),
+        Some(9..16)
+    );
+}
+
+#[test]
+fn failed_code_parse_is_audited() {
+    let mut metadata = test_metadata("text/x-rust");
+    metadata.extension = Some("rs".to_owned());
+    let content = super::extractors::code::extract("fn {", &metadata)
+        .expect("supported extension should run the parser");
+
+    assert_eq!(content.pipeline.len(), 1);
+    assert_eq!(content.pipeline[0].engine, "tree-sitter");
+    assert_eq!(content.pipeline[0].outputs.get("parts"), Some(&1));
+}
+
+#[test]
+fn preserves_single_part_text() {
+    for text in [" leading and trailing ", " \n\t "] {
+        let content =
+            super::types::DocumentContent::from_text(text.to_string());
+
+        assert_eq!(content.text().as_deref(), Some(text));
+        assert_eq!(content.parts.len(), 1);
+        assert_eq!(content.parts[0].text.as_deref(), Some(text));
+    }
 }
 
 #[cfg(feature = "ocr")]

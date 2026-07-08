@@ -7,6 +7,8 @@ use axum::{
 };
 use serde::Serialize;
 
+use akuna_core::index::IndexError;
+
 /// Error returned by service interfaces.
 #[derive(Debug)]
 pub enum ServiceError {
@@ -32,6 +34,13 @@ impl ServiceError {
             message: message.into(),
         }
     }
+
+    /// Builds an internal service error.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::Internal {
+            message: message.into(),
+        }
+    }
 }
 
 impl From<serde_json::Error> for ServiceError {
@@ -40,15 +49,11 @@ impl From<serde_json::Error> for ServiceError {
     }
 }
 
-impl From<akuna_core::storage::GraphError> for ServiceError {
-    fn from(source: akuna_core::storage::GraphError) -> Self {
+impl From<IndexError> for ServiceError {
+    fn from(source: IndexError) -> Self {
         match source {
-            akuna_core::storage::GraphError::NotFound { .. } => {
-                Self::not_found(source.to_string())
-            }
-            _ => Self::Internal {
-                message: source.to_string(),
-            },
+            IndexError::InvalidInput { message } => Self::bad_request(message),
+            error => Self::internal(error.to_string()),
         }
     }
 }
@@ -106,3 +111,7 @@ impl From<ServiceError> for ApiError {
 
 /// HTTP API result adapter.
 pub type ApiResult<T> = Result<Json<T>, ApiError>;
+
+#[cfg(test)]
+#[path = "error/tests.rs"]
+mod tests;

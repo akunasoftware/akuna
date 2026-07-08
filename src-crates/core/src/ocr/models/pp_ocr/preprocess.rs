@@ -23,14 +23,13 @@ pub(crate) fn preprocess_detector(
     config: &PpOcrDetectionConfig,
 ) -> Result<PpOcrInput> {
     let (original_width, original_height) = image.dimensions();
-    // PaddleOCR's `DetResizeForTest` with `limit_type="min"`: scale so the
-    // shortest side is at least `limit_side_len`, snap each side to a multiple
-    // of 32, resize with cv2 INTER_LINEAR, and feed the variable-size tensor
-    // as-is (no pad).
+    // PaddleOCR's `DetResizeForTest` with `limit_type="min"`: scale the
+    // shortest side up, cap the longest side, then snap each side to 32.
     let (resized_width, resized_height) = detector_resize_dims(
         original_width,
         original_height,
         config.limit_side_len,
+        config.max_side_limit,
     );
     let resized = crate::ml::imageproc::resize_linear_cv2(
         image,
@@ -56,26 +55,34 @@ pub(crate) fn preprocess_detector(
 }
 
 /// Returns the detector input `(width, height)` for an image of the given size.
-fn detector_resize_dims(
+pub(super) fn detector_resize_dims(
     width: u32,
     height: u32,
     limit_side_len: u32,
+    max_side_limit: u32,
 ) -> (u32, u32) {
-    let (w, h) = (width.max(1) as f32, height.max(1) as f32);
-    let limit = limit_side_len as f32;
+    let (w, h) = (width.max(1) as f64, height.max(1) as f64);
+    let limit = limit_side_len as f64;
     let shortest = w.min(h);
     let ratio = if shortest < limit {
         limit / shortest
     } else {
         1.0
     };
+    let mut resized_width = (w * ratio).trunc();
+    let mut resized_height = (h * ratio).trunc();
+    let longest = resized_width.max(resized_height);
+    if longest > max_side_limit as f64 {
+        let ratio = max_side_limit as f64 / longest;
+        resized_width = (resized_width * ratio).trunc();
+        resized_height = (resized_height * ratio).trunc();
+    }
     // Python: int(side * ratio) truncates, then round(x / 32) * 32 (ties-even).
-    let snap = |side: f32| -> u32 {
-        let scaled = (side * ratio).trunc();
+    let snap = |scaled: f64| -> u32 {
         let snapped = (scaled / 32.0).round_ties_even() * 32.0;
         (snapped as u32).max(32)
     };
-    (snap(w), snap(h))
+    (snap(resized_width), snap(resized_height))
 }
 
 pub(crate) fn preprocess_recognizer(

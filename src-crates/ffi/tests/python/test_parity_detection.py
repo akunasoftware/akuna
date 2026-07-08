@@ -4,6 +4,7 @@ from functools import lru_cache
 import akuna_core
 from huggingface_hub import hf_hub_download, list_repo_files
 from magika import Magika
+import pytest
 
 
 HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
@@ -35,10 +36,18 @@ def corpus_paths() -> tuple[tuple[str, Path], ...]:
 def assert_file_type_matches(actual: akuna_core.FileType, expected: object) -> None:
     """Assert file type metadata matches."""
     info = expected.output
-    assert actual.label == info.label
-    assert actual.mime_type == info.mime_type
-    assert actual.group == info.group
-    assert actual.description == info.description
+    assert actual.info.label == info.label
+    assert actual.info.mime_type == info.mime_type
+    assert actual.info.group == info.group
+    assert actual.info.description == info.description
+    assert actual.info.extensions == info.extensions
+    assert actual.info.is_text == info.is_text
+
+
+def assert_model_result(actual: akuna_core.FileType, expected: object) -> None:
+    """Assert model confidence and origin against the Magika reference."""
+    assert actual.confidence == pytest.approx(expected.score, abs=5e-4)
+    assert actual.origin == akuna_core.DetectionOrigin.MODEL
 
 
 def test_identify_bytes_and_file_match(tmp_path: Path) -> None:
@@ -50,12 +59,12 @@ def test_identify_bytes_and_file_match(tmp_path: Path) -> None:
         path = tmp_path / name
         path.write_bytes(data)
 
-        assert_file_type_matches(
-            detector.identify_bytes(data), reference.identify_bytes(data)
-        )
-        assert_file_type_matches(
-            detector.identify_path(str(path)), reference.identify_path(path)
-        )
+        bytes_result = detector.identify_bytes(data)
+        path_result = detector.identify_path(str(path))
+        assert_file_type_matches(bytes_result, reference.identify_bytes(data))
+        assert_file_type_matches(path_result, reference.identify_path(path))
+        assert_model_result(bytes_result, reference.identify_bytes(data))
+        assert_model_result(path_result, reference.identify_path(path))
 
 
 def test_identify_corpus_matches_reference() -> None:
@@ -65,9 +74,9 @@ def test_identify_corpus_matches_reference() -> None:
 
     for _name, path in corpus_paths():
         data = path.read_bytes()
-        assert_file_type_matches(
-            detector.identify_bytes(data), reference.identify_bytes(data)
-        )
-        assert_file_type_matches(
-            detector.identify_path(str(path)), reference.identify_path(path)
-        )
+        bytes_result = detector.identify_bytes(data)
+        path_result = detector.identify_path(str(path))
+        assert_file_type_matches(bytes_result, reference.identify_bytes(data))
+        assert_file_type_matches(path_result, reference.identify_path(path))
+        assert 0.0 <= bytes_result.confidence <= 1.0
+        assert 0.0 <= path_result.confidence <= 1.0

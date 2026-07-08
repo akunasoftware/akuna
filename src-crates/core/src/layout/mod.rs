@@ -12,22 +12,27 @@
 //! # }
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use burn_dispatch::DispatchDevice;
-use image::DynamicImage;
 
+mod error;
 mod models;
 
 use crate::layout::models::pp_doclayout::{
     PpDocLayoutRuntime, load_pp_doclayout_runtime,
 };
-use crate::ml::backend::{self, Backend};
+use crate::ml::{
+    backend::{self, Backend},
+    boxed_model_error,
+};
+
+pub use error::LayoutError;
 
 /// Supported document layout model checkpoints.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LayoutModel {
-    /// `PaddlePaddle/PP-DocLayoutV3_safetensors`.
+    /// `PaddlePaddle/PP-DocLayoutV3_safetensors` at `97d101e`.
     #[default]
     PpDocLayoutV3,
 }
@@ -39,24 +44,6 @@ pub struct LayoutDetectorOptions {
     pub model: LayoutModel,
     /// Optional model download cache directory.
     pub cache_dir: Option<PathBuf>,
-}
-
-/// Layout detection failure.
-#[derive(Debug, thiserror::Error)]
-pub enum LayoutError {
-    /// Layout model files or weights failed to load.
-    #[error("Layout model load failed")]
-    Load {
-        /// Underlying loader error.
-        source: anyhow::Error,
-    },
-
-    /// Layout preprocessing or inference failed.
-    #[error("Layout detection failed")]
-    Detect {
-        /// Underlying detection error.
-        source: anyhow::Error,
-    },
 }
 
 /// Layout output for one page/image.
@@ -122,6 +109,7 @@ pub struct LayoutRect {
 pub struct LayoutDetector {
     runtime: PpDocLayoutRuntime<Backend>,
     device: DispatchDevice,
+    model: LayoutModel,
 }
 
 impl LayoutDetector {
@@ -137,26 +125,60 @@ impl LayoutDetector {
         device: DispatchDevice,
         options: LayoutDetectorOptions,
     ) -> Result<Self, LayoutError> {
-        let runtime = match options.model {
+        let LayoutDetectorOptions { model, cache_dir } = options;
+        let runtime = match model {
             LayoutModel::PpDocLayoutV3 => {
-                load_pp_doclayout_runtime(&device, options.cache_dir)
+                load_pp_doclayout_runtime(&device, cache_dir)
                     .await
-                    .map_err(|source| LayoutError::Load { source })?
+                    .map_err(|source| LayoutError::Load {
+                        source: boxed_model_error(source),
+                    })?
             }
         };
 
-        Ok(Self { runtime, device })
+        Ok(Self {
+            runtime,
+            device,
+            model,
+        })
     }
 
-    /// Detects layout blocks from a decoded image.
-    pub fn detect_image(
+    /// Detects layout blocks from an image file.
+    pub fn detect_file(
         &self,
-        image: &DynamicImage,
+        path: impl AsRef<Path>,
+    ) -> Result<LayoutPage, LayoutError> {
+        let path = path.as_ref();
+        let bytes =
+            std::fs::read(path).map_err(|source| LayoutError::ReadFile {
+                path: path.to_path_buf(),
+                source,
+            })?;
+
+        self.detect_bytes(&bytes)
+    }
+
+    /// Detects layout blocks from encoded image bytes.
+    pub fn detect_bytes(
+        &self,
+        bytes: &[u8],
+    ) -> Result<LayoutPage, LayoutError> {
+        let image = image::load_from_memory(bytes)
+            .map_err(|source| LayoutError::DecodeImage { source })?;
+
+        self.detect_decoded(&image)
+    }
+
+    fn detect_decoded(
+        &self,
+        image: &image::DynamicImage,
     ) -> Result<LayoutPage, LayoutError> {
         let blocks = self
             .runtime
             .detect_image(image, &self.device)
-            .map_err(|source| LayoutError::Detect { source })?
+            .map_err(|source| LayoutError::Detect {
+                source: boxed_model_error(source),
+            })?
             .into_iter()
             .map(|detection| LayoutBlock {
                 label: detection.label,
@@ -177,4 +199,12 @@ impl LayoutDetector {
             blocks,
         })
     }
+
+    /// Returns the loaded layout checkpoint.
+    pub fn model(&self) -> LayoutModel {
+        self.model
+    }
 }
+
+#[cfg(test)]
+mod tests;

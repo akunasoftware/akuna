@@ -4,7 +4,10 @@ mod extraction;
 mod schemas;
 mod serve;
 
-use crate::tracing::{LOG_LEVELS, setup_tracing};
+use crate::{
+    APP_NAME,
+    tracing::{LOG_LEVELS, setup_tracing},
+};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -36,7 +39,7 @@ enum Command {
 /// Runs the parsed CLI command.
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
-    setup_tracing("akuna", cli.log_level.as_deref());
+    setup_tracing(APP_NAME, cli.log_level.as_deref());
 
     match cli.command {
         Command::Extract(command) => command.run().await,

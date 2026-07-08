@@ -1,6 +1,14 @@
 //! Layout bindings.
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), akuna_ffi::layout::LayoutError> {
+//! let detector = akuna_ffi::layout::load_layout_detector(None).await?;
+//! let _page = detector.detect_bytes(Vec::new())?;
+//! # Ok(())
+//! # }
+//! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use akuna_core::layout as core_layout;
 
@@ -13,9 +21,9 @@ pub enum LayoutError {
         /// Human-readable error message.
         message: String,
     },
-    /// Image read failure.
+    /// File read failure.
     #[error("{message}")]
-    ReadImage {
+    ReadFile {
         /// Human-readable error message.
         message: String,
     },
@@ -45,6 +53,8 @@ pub enum LayoutModel {
 pub struct LayoutDetectorOptions {
     /// Model checkpoint to load.
     pub model: LayoutModel,
+    /// Optional model download cache directory.
+    pub cache_dir: Option<String>,
 }
 
 /// Layout output for one page image.
@@ -96,9 +106,10 @@ pub async fn load_layout_detector(
     options: Option<LayoutDetectorOptions>,
 ) -> Result<LayoutDetector, LayoutError> {
     let options = options.map(Into::into).unwrap_or_default();
-    let inner = core_layout::LayoutDetector::new(options)
-        .await
-        .map_err(LayoutError::from)?;
+    let inner =
+        crate::stack::run_async(core_layout::LayoutDetector::new(options))
+            .map_err(detect_error)?
+            .map_err(LayoutError::from)?;
     Ok(LayoutDetector { inner })
 }
 
@@ -106,11 +117,26 @@ pub async fn load_layout_detector(
 impl LayoutDetector {
     /// Detects layout blocks from an image path.
     pub fn detect_path(&self, path: String) -> Result<LayoutPage, LayoutError> {
-        let image = image::open(Path::new(&path)).map_err(image_error)?;
-        crate::stack::run(|| self.inner.detect_image(&image))
+        crate::stack::run(|| self.inner.detect_file(Path::new(&path)))
             .map_err(detect_error)?
             .map(LayoutPage::from)
             .map_err(LayoutError::from)
+    }
+
+    /// Detects layout blocks from encoded image bytes.
+    pub fn detect_bytes(
+        &self,
+        data: Vec<u8>,
+    ) -> Result<LayoutPage, LayoutError> {
+        crate::stack::run(|| self.inner.detect_bytes(&data))
+            .map_err(detect_error)?
+            .map(LayoutPage::from)
+            .map_err(LayoutError::from)
+    }
+
+    /// Returns the loaded layout checkpoint.
+    pub fn model(&self) -> LayoutModel {
+        self.inner.model().into()
     }
 }
 
@@ -118,7 +144,7 @@ impl From<LayoutDetectorOptions> for core_layout::LayoutDetectorOptions {
     fn from(value: LayoutDetectorOptions) -> Self {
         Self {
             model: value.model.into(),
-            cache_dir: None,
+            cache_dir: value.cache_dir.map(PathBuf::from),
         }
     }
 }
@@ -127,6 +153,14 @@ impl From<LayoutModel> for core_layout::LayoutModel {
     fn from(value: LayoutModel) -> Self {
         match value {
             LayoutModel::PpDocLayoutV3 => Self::PpDocLayoutV3,
+        }
+    }
+}
+
+impl From<core_layout::LayoutModel> for LayoutModel {
+    fn from(value: core_layout::LayoutModel) -> Self {
+        match value {
+            core_layout::LayoutModel::PpDocLayoutV3 => Self::PpDocLayoutV3,
         }
     }
 }
@@ -166,6 +200,19 @@ impl From<core_layout::LayoutRect> for LayoutRect {
 impl From<core_layout::LayoutError> for LayoutError {
     fn from(value: core_layout::LayoutError) -> Self {
         match value {
+            core_layout::LayoutError::ReadFile { path, source } => {
+                Self::ReadFile {
+                    message: format!(
+                        "failed to read layout input file '{}': {source}",
+                        path.display()
+                    ),
+                }
+            }
+            core_layout::LayoutError::DecodeImage { source } => {
+                Self::DecodeImage {
+                    message: source.to_string(),
+                }
+            }
             core_layout::LayoutError::Load { source } => Self::Load {
                 message: source.to_string(),
             },
@@ -173,17 +220,6 @@ impl From<core_layout::LayoutError> for LayoutError {
                 message: source.to_string(),
             },
         }
-    }
-}
-
-fn image_error(error: image::ImageError) -> LayoutError {
-    match error {
-        image::ImageError::IoError(error) => LayoutError::ReadImage {
-            message: error.to_string(),
-        },
-        error => LayoutError::DecodeImage {
-            message: error.to_string(),
-        },
     }
 }
 

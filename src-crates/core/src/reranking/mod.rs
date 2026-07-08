@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+mod error;
 mod models;
 
 #[cfg(test)]
@@ -27,7 +28,7 @@ mod tests;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, bail};
 use burn_dispatch::DispatchDevice;
 
 use crate::ml::backend::{self, Backend};
@@ -36,6 +37,10 @@ use crate::ml::{resolve_batch_size, sigmoid_f32, tensor1_to_vec_f32};
 use crate::reranking::models::xlm_roberta::{
     XlmRobertaRerankerModel, load_pretrained_xlm_roberta_reranker,
 };
+
+pub use error::RerankingError;
+
+type Result<T> = std::result::Result<T, RerankingError>;
 /// Default inference batch size when callers do not override it.
 const DEFAULT_BATCH_SIZE: usize = 32;
 
@@ -92,6 +97,7 @@ pub struct RerankOptions {
 /// Cross-encoder text reranker.
 pub struct TextReranker {
     model: XlmRobertaRerankerModel<Backend>,
+    model_kind: RerankingModel,
     device: DispatchDevice,
 }
 
@@ -106,14 +112,25 @@ impl TextReranker {
         device: DispatchDevice,
         options: TextRerankerOptions,
     ) -> Result<Self> {
+        let model_kind = options.model;
         let model = load_pretrained_xlm_roberta_reranker(
             &device,
-            options.model.repo_id(),
+            model_kind.repo_id(),
             options.cache_dir,
         )
-        .await?;
+        .await
+        .map_err(RerankingError::load)?;
 
-        Ok(Self { model, device })
+        Ok(Self {
+            model,
+            model_kind,
+            device,
+        })
+    }
+
+    /// Returns the loaded reranking checkpoint.
+    pub fn model(&self) -> RerankingModel {
+        self.model_kind
     }
 
     /// Scores query/document pairs in batches, one score per pair.
@@ -127,15 +144,22 @@ impl TextReranker {
         }
 
         let batch_size =
-            resolve_batch_size(pairs.len(), batch_size, DEFAULT_BATCH_SIZE)?;
+            resolve_batch_size(pairs.len(), batch_size, DEFAULT_BATCH_SIZE)
+                .map_err(RerankingError::inference)?;
         let mut scores = Vec::with_capacity(pairs.len());
 
         for batch in pairs.chunks(batch_size) {
-            let batch_scores = self.model.score(batch, &self.device)?;
-            scores.extend(tensor1_to_vec_f32(
-                batch_scores,
-                "failed to read reranker output tensor",
-            )?);
+            let batch_scores = self
+                .model
+                .score(batch, &self.device)
+                .map_err(RerankingError::inference)?;
+            scores.extend(
+                tensor1_to_vec_f32(
+                    batch_scores,
+                    "failed to read reranker output tensor",
+                )
+                .map_err(RerankingError::inference)?,
+            );
         }
 
         Ok(scores)
@@ -152,6 +176,7 @@ impl TextReranker {
         scores
             .pop()
             .context("expected one score for a single input pair")
+            .map_err(RerankingError::inference)
     }
 
     /// Scores many query/document pairs in batches.
@@ -187,7 +212,7 @@ impl TextReranker {
         documents: &[S],
         options: RerankOptions,
     ) -> Result<Vec<RerankResult>> {
-        validate_top_k(options.top_k)?;
+        validate_top_k(options.top_k).map_err(RerankingError::inference)?;
         let query = query.as_ref();
         let document_refs =
             documents.iter().map(AsRef::as_ref).collect::<Vec<_>>();
@@ -209,7 +234,12 @@ impl TextReranker {
             })
             .collect::<Vec<_>>();
 
-        indexed_scores.sort_by(|left, right| right.1.total_cmp(&left.1));
+        indexed_scores.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
         if let Some(top_k) = options.top_k {
             indexed_scores.truncate(top_k);
         }
@@ -225,7 +255,7 @@ impl TextReranker {
     }
 }
 
-fn validate_top_k(top_k: Option<usize>) -> Result<()> {
+fn validate_top_k(top_k: Option<usize>) -> anyhow::Result<()> {
     if matches!(top_k, Some(0)) {
         bail!("top_k must be greater than zero");
     }

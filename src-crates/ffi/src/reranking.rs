@@ -1,4 +1,14 @@
 //! Reranking bindings.
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), akuna_ffi::reranking::RerankingError> {
+//! let reranker = akuna_ffi::reranking::load_text_reranker(None).await?;
+//! let _score = reranker.score("query".to_string(), "document".to_string())?;
+//! # Ok(())
+//! # }
+//! ```
+
+use std::path::PathBuf;
 
 use akuna_core::reranking as core_reranking;
 
@@ -25,6 +35,8 @@ pub enum RerankingModel {
 pub struct TextRerankerOptions {
     /// Which reranker checkpoint to load.
     pub model: RerankingModel,
+    /// Optional Hugging Face cache directory override.
+    pub cache_dir: Option<String>,
 }
 
 /// Tunable behaviour for one rerank call.
@@ -69,16 +81,29 @@ pub struct TextReranker {
 pub async fn load_text_reranker(
     options: Option<TextRerankerOptions>,
 ) -> Result<TextReranker, RerankingError> {
-    let inner = core_reranking::TextReranker::new(core_options(options))
-        .await
-        .map_err(to_error)?;
+    let inner = crate::stack::run_async(core_reranking::TextReranker::new(
+        core_options(options),
+    ))
+    .map_err(to_error)?
+    .map_err(to_error)?;
     Ok(TextReranker { inner })
 }
 
 #[uniffi::export]
 impl TextReranker {
+    /// Scores one query/document pair.
+    pub fn score(
+        &self,
+        query: String,
+        document: String,
+    ) -> Result<f32, RerankingError> {
+        crate::stack::run(|| self.inner.score(query, document))
+            .map_err(to_error)?
+            .map_err(to_error)
+    }
+
     /// Scores query/document pairs in batches.
-    pub fn score_pairs(
+    pub fn score_batch(
         &self,
         pairs: Vec<TextPair>,
         batch_size: Option<u32>,
@@ -87,14 +112,12 @@ impl TextReranker {
             .into_iter()
             .map(|pair| (pair.query, pair.document))
             .collect::<Vec<_>>();
-        self.inner
-            .score_batch(
-                &pairs,
-                batch_size
-                    .map(usize::try_from)
-                    .transpose()
-                    .map_err(to_error)?,
-            )
+        let batch_size = batch_size
+            .map(usize::try_from)
+            .transpose()
+            .map_err(to_error)?;
+        crate::stack::run(|| self.inner.score_batch(&pairs, batch_size))
+            .map_err(to_error)?
             .map_err(to_error)
     }
 
@@ -103,24 +126,36 @@ impl TextReranker {
         &self,
         query: String,
         documents: Vec<String>,
-        options: Option<RerankOptions>,
     ) -> Result<Vec<RerankResult>, RerankingError> {
-        self.inner
-            .rerank_with_options(
-                query,
-                &documents,
-                core_rerank_options(options)?,
-            )
+        crate::stack::run(|| self.inner.rerank(query, &documents))
+            .map_err(to_error)?
             .map_err(to_error)?
             .into_iter()
-            .map(|result| {
-                Ok(RerankResult {
-                    index: u64::try_from(result.index).map_err(to_error)?,
-                    document: result.document,
-                    score: result.score,
-                })
-            })
+            .map(ffi_result)
             .collect()
+    }
+
+    /// Ranks documents against a query with custom options.
+    pub fn rerank_with_options(
+        &self,
+        query: String,
+        documents: Vec<String>,
+        options: RerankOptions,
+    ) -> Result<Vec<RerankResult>, RerankingError> {
+        let options = core_rerank_options(options)?;
+        crate::stack::run(|| {
+            self.inner.rerank_with_options(query, &documents, options)
+        })
+        .map_err(to_error)?
+        .map_err(to_error)?
+        .into_iter()
+        .map(ffi_result)
+        .collect()
+    }
+
+    /// Returns the loaded reranking checkpoint.
+    pub fn model(&self) -> RerankingModel {
+        self.inner.model().into()
     }
 }
 
@@ -132,19 +167,15 @@ fn core_options(
         core_reranking::TextRerankerOptions::default,
         |options| core_reranking::TextRerankerOptions {
             model: options.model.into(),
-            cache_dir: None,
+            cache_dir: options.cache_dir.map(PathBuf::from),
         },
     )
 }
 
 // Keep binding call options aligned with core options.
 fn core_rerank_options(
-    options: Option<RerankOptions>,
+    options: RerankOptions,
 ) -> Result<core_reranking::RerankOptions, RerankingError> {
-    let Some(options) = options else {
-        return Ok(core_reranking::RerankOptions::default());
-    };
-
     let mut core_options = core_reranking::RerankOptions::default();
     core_options.top_k = options
         .top_k
@@ -166,6 +197,26 @@ impl From<RerankingModel> for core_reranking::RerankingModel {
             RerankingModel::BgeRerankerBase => Self::BgeRerankerBase,
         }
     }
+}
+
+impl From<core_reranking::RerankingModel> for RerankingModel {
+    fn from(model: core_reranking::RerankingModel) -> Self {
+        match model {
+            core_reranking::RerankingModel::BgeRerankerBase => {
+                Self::BgeRerankerBase
+            }
+        }
+    }
+}
+
+fn ffi_result(
+    result: core_reranking::RerankResult,
+) -> Result<RerankResult, RerankingError> {
+    Ok(RerankResult {
+        index: u64::try_from(result.index).map_err(to_error)?,
+        document: result.document,
+        score: result.score,
+    })
 }
 
 // Keep binding errors string-only for language portability.

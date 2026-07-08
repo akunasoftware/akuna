@@ -4,8 +4,6 @@
     clippy::type_complexity
 )]
 
-use std::path::PathBuf;
-
 use anyhow::{Context, Result, bail};
 use burn::module::Param;
 use burn::nn::{PaddingConfig2d, conv::Conv2d};
@@ -16,30 +14,19 @@ use burn::tensor::{
     module::{interpolate, max_pool2d},
     ops::{InterpolateMode, InterpolateOptions, PadMode},
 };
-use hf_hub::{Repo, RepoType, api::tokio::ApiBuilder};
 use image::{DynamicImage, GenericImageView};
 use safetensors::{Dtype, SafeTensors};
-use serde::Deserialize;
 
 use crate::ml::burn_nn::{
     batch_norm_inference, gelu, relu, sigmoid as sigmoid_tensor, silu,
 };
-use crate::ml::{safe_matmul, sigmoid_f32};
+use crate::ml::{HfWeight, fetch_hf_weight, safe_matmul, sigmoid_f32};
 
 const PP_DOCLAYOUT_REPO_ID: &str = "PaddlePaddle/PP-DocLayoutV3_safetensors";
-const PP_DOCLAYOUT_CONFIG: &str = "config.json";
-const PP_DOCLAYOUT_PREPROCESSOR: &str = "preprocessor_config.json";
 const PP_DOCLAYOUT_WEIGHTS: &str = "model.safetensors";
-const PP_DOCLAYOUT_WEIGHTS_ENV: &str = "PP_DOCLAYOUT_WEIGHTS";
+const PP_DOCLAYOUT_REVISION: &str = "97d101e6db2642e162a1d05392d1b0231c91033e";
 
 #[derive(Debug, Clone)]
-struct PpDocLayoutFiles {
-    pub(crate) config_path: PathBuf,
-    pub(crate) preprocessor_path: PathBuf,
-    pub(crate) weights_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 struct PpDocLayoutConfig {
     pub(crate) model_type: String,
     pub(crate) architectures: Vec<String>,
@@ -52,7 +39,7 @@ struct PpDocLayoutConfig {
     pub(crate) id2label: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 struct PpDocLayoutPreprocessorConfig {
     pub(crate) do_resize: bool,
     pub(crate) size: PpDocLayoutSize,
@@ -60,7 +47,7 @@ struct PpDocLayoutPreprocessorConfig {
     pub(crate) image_std: Vec<f32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct PpDocLayoutSize {
     pub(crate) height: usize,
     pub(crate) width: usize,
@@ -1508,13 +1495,12 @@ where
         memory: Tensor<B, 3>,
         reference_boxes: Tensor<B, 3>,
         spatial_shapes: &[(usize, usize)],
-    ) -> Tensor<B, 3> {
+    ) -> Result<Tensor<B, 3>> {
         let [batch, queries, _hidden] = hidden.dims();
         let [_memory_batch, sequence, _memory_hidden] = memory.dims();
         let heads = 8;
         let head_dim = 32;
         let levels = spatial_shapes.len();
-        let device = hidden.device();
         let value = self
             .value_proj
             .forward(memory)
@@ -1536,12 +1522,9 @@ where
             weights,
             reference_boxes,
             spatial_shapes,
-        )
-        .unwrap_or_else(|_| {
-            Tensor::zeros([batch, queries, heads * head_dim], &device)
-        });
+        )?;
 
-        self.output_proj.forward(context)
+        Ok(self.output_proj.forward(context))
     }
 }
 
@@ -1607,26 +1590,26 @@ where
         memory: Tensor<B, 3>,
         reference_boxes: Tensor<B, 3>,
         spatial_shapes: &[(usize, usize)],
-    ) -> Tensor<B, 3> {
+    ) -> Result<Tensor<B, 3>> {
         let residual = hidden.clone();
         let hidden = self.self_attn_layer_norm.forward(
             residual + self.self_attn.forward(hidden, query_pos.clone()),
         );
         let residual = hidden.clone();
-        let hidden = self.encoder_attn_layer_norm.forward(
-            residual
-                + self.encoder_attn.forward(
-                    hidden,
-                    query_pos,
-                    memory,
-                    reference_boxes,
-                    spatial_shapes,
-                ),
-        );
+        let cross_attention = self.encoder_attn.forward(
+            hidden,
+            query_pos,
+            memory,
+            reference_boxes,
+            spatial_shapes,
+        )?;
+        let hidden = self
+            .encoder_attn_layer_norm
+            .forward(residual + cross_attention);
         let residual = hidden.clone();
         let mlp = self.fc2.forward(relu(self.fc1.forward(hidden)));
 
-        self.final_layer_norm.forward(residual + mlp)
+        Ok(self.final_layer_norm.forward(residual + mlp))
     }
 }
 
@@ -1716,7 +1699,7 @@ where
                 encoder_hidden_states.clone(),
                 reference.clone(),
                 spatial_shapes,
-            );
+            )?;
             reference = sigmoid_tensor(
                 bbox_head.forward(decoded.clone())
                     + inverse_sigmoid_tensor(reference),
@@ -1958,40 +1941,26 @@ where
     }
 }
 
-async fn load_pp_doclayout_files(
-    cache_dir: Option<PathBuf>,
-) -> Result<PpDocLayoutFiles> {
-    let mut builder = ApiBuilder::new();
-    if let Some(cache_dir) = cache_dir {
-        builder = builder.with_cache_dir(cache_dir);
-    }
-    let api = builder.build()?;
-    let repo =
-        api.repo(Repo::new(PP_DOCLAYOUT_REPO_ID.to_string(), RepoType::Model));
-
-    let weights_path = match std::env::var_os(PP_DOCLAYOUT_WEIGHTS_ENV) {
-        Some(path) => PathBuf::from(path),
-        None => repo.get(PP_DOCLAYOUT_WEIGHTS).await?,
-    };
-
-    Ok(PpDocLayoutFiles {
-        config_path: repo.get(PP_DOCLAYOUT_CONFIG).await?,
-        preprocessor_path: repo.get(PP_DOCLAYOUT_PREPROCESSOR).await?,
-        weights_path,
-    })
-}
-
 pub(crate) async fn load_pp_doclayout_runtime<B>(
     device: &B::Device,
-    cache_dir: Option<PathBuf>,
+    cache_dir: Option<std::path::PathBuf>,
 ) -> Result<PpDocLayoutRuntime<B>>
 where
     B: Backend<FloatElem = f32>,
 {
-    let files = load_pp_doclayout_files(cache_dir).await?;
-    let (config, preprocessor) = read_pp_doclayout_config(&files)?;
-    let bytes = std::fs::read(&files.weights_path).with_context(|| {
-        format!("failed to read {}", files.weights_path.display())
+    let (config, preprocessor) = bundled_pp_doclayout_config()?;
+    let weights_path = fetch_hf_weight(
+        HfWeight {
+            repo_id: PP_DOCLAYOUT_REPO_ID,
+            revision: PP_DOCLAYOUT_REVISION,
+            filename: PP_DOCLAYOUT_WEIGHTS,
+        },
+        cache_dir.as_deref(),
+        "PP-DocLayoutV3",
+    )
+    .await?;
+    let bytes = std::fs::read(&weights_path).with_context(|| {
+        format!("failed to read {}", weights_path.display())
     })?;
     let tensors = SafeTensors::deserialize(&bytes)?;
     validate_pp_doclayout_weights(&tensors)?;
@@ -2033,20 +2002,55 @@ where
     }
 }
 
-fn read_pp_doclayout_config(
-    files: &PpDocLayoutFiles,
-) -> Result<(PpDocLayoutConfig, PpDocLayoutPreprocessorConfig)> {
-    let config = serde_json::from_slice::<PpDocLayoutConfig>(
-        &std::fs::read(&files.config_path).with_context(|| {
-            format!("failed to read {}", files.config_path.display())
-        })?,
-    )?;
-    let preprocessor = serde_json::from_slice::<PpDocLayoutPreprocessorConfig>(
-        &std::fs::read(&files.preprocessor_path).with_context(|| {
-            format!("failed to read {}", files.preprocessor_path.display())
-        })?,
-    )?;
-
+fn bundled_pp_doclayout_config()
+-> Result<(PpDocLayoutConfig, PpDocLayoutPreprocessorConfig)> {
+    // Pinned to PP-DocLayoutV3 revision `97d101e6db2642e162a1d05392d1b0231c91033e`.
+    let config = PpDocLayoutConfig {
+        model_type: "pp_doclayout_v3".to_string(),
+        architectures: vec!["PPDocLayoutV3ForObjectDetection".to_string()],
+        d_model: 256,
+        num_queries: 300,
+        decoder_layers: 6,
+        decoder_attention_heads: 8,
+        decoder_n_points: 4,
+        feature_strides: vec![8, 16, 32],
+        id2label: std::collections::BTreeMap::from([
+            ("0".to_string(), "abstract".to_string()),
+            ("1".to_string(), "algorithm".to_string()),
+            ("2".to_string(), "aside_text".to_string()),
+            ("3".to_string(), "chart".to_string()),
+            ("4".to_string(), "content".to_string()),
+            ("5".to_string(), "formula".to_string()),
+            ("6".to_string(), "doc_title".to_string()),
+            ("7".to_string(), "figure_title".to_string()),
+            ("8".to_string(), "footer".to_string()),
+            ("9".to_string(), "footer".to_string()),
+            ("10".to_string(), "footnote".to_string()),
+            ("11".to_string(), "formula_number".to_string()),
+            ("12".to_string(), "header".to_string()),
+            ("13".to_string(), "header".to_string()),
+            ("14".to_string(), "image".to_string()),
+            ("15".to_string(), "formula".to_string()),
+            ("16".to_string(), "number".to_string()),
+            ("17".to_string(), "paragraph_title".to_string()),
+            ("18".to_string(), "reference".to_string()),
+            ("19".to_string(), "reference_content".to_string()),
+            ("20".to_string(), "seal".to_string()),
+            ("21".to_string(), "table".to_string()),
+            ("22".to_string(), "text".to_string()),
+            ("23".to_string(), "text".to_string()),
+            ("24".to_string(), "vision_footnote".to_string()),
+        ]),
+    };
+    let preprocessor = PpDocLayoutPreprocessorConfig {
+        do_resize: true,
+        size: PpDocLayoutSize {
+            height: 800,
+            width: 800,
+        },
+        image_mean: vec![0.0, 0.0, 0.0],
+        image_std: vec![1.0, 1.0, 1.0],
+    };
     validate_pp_doclayout_config(&config, &preprocessor)?;
     Ok((config, preprocessor))
 }
@@ -2121,6 +2125,10 @@ pub(crate) fn sort_detections_by_order(
             .cmp(&right.order)
             .then_with(|| left.bbox[1].total_cmp(&right.bbox[1]))
             .then_with(|| left.bbox[0].total_cmp(&right.bbox[0]))
+            .then_with(|| left.bbox[3].total_cmp(&right.bbox[3]))
+            .then_with(|| left.bbox[2].total_cmp(&right.bbox[2]))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.score.total_cmp(&right.score))
     });
     detections
 }
@@ -2215,7 +2223,13 @@ pub(crate) fn postprocess_encoder_proposals<B: Backend<FloatElem = f32>>(
         })
         .filter(|(_, _, score)| *score >= options.score_threshold)
         .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| right.2.total_cmp(&left.2));
+    candidates.sort_by(|left, right| {
+        right
+            .2
+            .total_cmp(&left.2)
+            .then_with(|| left.0.cmp(&right.0))
+            .then_with(|| left.1.cmp(&right.1))
+    });
 
     let mut detections = Vec::new();
     for (proposal, label_id, score) in candidates {
@@ -2245,7 +2259,17 @@ pub(crate) fn postprocess_encoder_proposals<B: Backend<FloatElem = f32>>(
         });
     }
 
-    detections.sort_by(|left, right| right.score.total_cmp(&left.score));
+    detections.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.bbox[1].total_cmp(&right.bbox[1]))
+            .then_with(|| left.bbox[0].total_cmp(&right.bbox[0]))
+            .then_with(|| left.bbox[3].total_cmp(&right.bbox[3]))
+            .then_with(|| left.bbox[2].total_cmp(&right.bbox[2]))
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.order.cmp(&right.order))
+    });
     let mut kept: Vec<LayoutDetection> = Vec::new();
     for detection in detections {
         if kept.len() >= options.max_detections {
@@ -2301,6 +2325,7 @@ fn reading_order_ranks<B: Backend<FloatElem = f32>>(
         .min_by(|left, right| {
             (incoming[*left] - outgoing[*left])
                 .total_cmp(&(incoming[*right] - outgoing[*right]))
+                .then_with(|| left.cmp(right))
         })
         .unwrap_or(0);
 
@@ -2312,7 +2337,11 @@ fn reading_order_ranks<B: Backend<FloatElem = f32>>(
             .copied()
             .enumerate()
             .filter(|(index, _score)| !visited[*index])
-            .max_by(|left, right| left.1.total_cmp(&right.1))
+            .max_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| right.0.cmp(&left.0))
+            })
             .map(|(index, _score)| index)
             .or_else(|| (0..proposals).find(|index| !visited[*index]));
         let Some(next) = next else {
@@ -2349,23 +2378,14 @@ fn read_conv1x1_weight<B>(
 where
     B: Backend<FloatElem = f32>,
 {
-    let values = read_f32_values(
+    read_transposed_f32_tensor(
         tensors,
         name,
         &[output_channels, input_channels, 1, 1],
-    )?;
-    let mut transposed = vec![0.0; values.len()];
-    for output in 0..output_channels {
-        for input in 0..input_channels {
-            transposed[input * output_channels + output] =
-                values[output * input_channels + input];
-        }
-    }
-
-    Ok(Tensor::from_data(
-        TensorData::new(transposed, [input_channels, output_channels]),
+        input_channels,
+        output_channels,
         device,
-    ))
+    )
 }
 
 fn read_conv2d_weight<B>(
@@ -2412,8 +2432,28 @@ fn read_linear_weight<B>(
 where
     B: Backend<FloatElem = f32>,
 {
-    let values =
-        read_f32_values(tensors, name, &[output_features, input_features])?;
+    read_transposed_f32_tensor(
+        tensors,
+        name,
+        &[output_features, input_features],
+        input_features,
+        output_features,
+        device,
+    )
+}
+
+fn read_transposed_f32_tensor<B>(
+    tensors: &SafeTensors<'_>,
+    name: &str,
+    source_shape: &[usize],
+    input_features: usize,
+    output_features: usize,
+    device: &B::Device,
+) -> Result<Tensor<B, 2>>
+where
+    B: Backend<FloatElem = f32>,
+{
+    let values = read_f32_values(tensors, name, source_shape)?;
     let mut transposed = vec![0.0; values.len()];
     for output in 0..output_features {
         for input in 0..input_features {
@@ -2502,7 +2542,12 @@ fn topk_proposal_indices<B: Backend<FloatElem = f32>>(
             (proposal, score)
         })
         .collect::<Vec<_>>();
-    ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
 
     Ok(ranked
         .into_iter()

@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::Serialize;
+
+use crate::chunking::PartKind;
+use crate::detection::DetectionOrigin;
 
 /// Top-level extraction configuration.
 pub struct ExtractionConfig {
@@ -45,7 +48,7 @@ pub struct ExtractionResult {
 }
 
 /// Closed set of extraction pipeline step roles.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractionPipelineStepKind {
     /// File type detection.
@@ -88,32 +91,6 @@ pub struct ExtractionProvenance {
     pub byte_range: Option<ExtractionByteRange>,
 }
 
-/// Shared semantic kind for extracted parts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PartKind {
-    /// Caption or source attribution.
-    Caption,
-    /// Source code or code-like content.
-    Code,
-    /// Page footer content.
-    Footer,
-    /// Heading or title content.
-    Heading,
-    /// List item content.
-    ListItem,
-    /// Markup content not otherwise classified.
-    Markup,
-    /// Paragraph text.
-    Paragraph,
-    /// Table content.
-    Table,
-    /// Plain text content.
-    Text,
-    /// Unclassified content.
-    Unknown,
-}
-
 /// One step in the extraction pipeline that processed a document.
 #[derive(Clone, Debug, Serialize)]
 pub struct ExtractionPipelineStep {
@@ -130,8 +107,9 @@ pub struct ExtractionPipelineStep {
     /// - `pages`: pages parsed.
     /// - `parts`: structured parts emitted.
     /// - `texts`: recognized text blocks.
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub outputs: HashMap<String, u64>,
+    /// - `types`: file types detected.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub outputs: BTreeMap<String, u64>,
 }
 
 /// Bounding box in source coordinates.
@@ -173,6 +151,10 @@ pub struct ExtractionMetadata {
     pub description: String,
     /// Whether the file can be treated as text.
     pub is_text: bool,
+    /// Detection confidence from 0 to 1.
+    pub confidence: f32,
+    /// Whether a rule or model resolved the file type.
+    pub origin: DetectionOrigin,
     /// Blake3 hash of raw file bytes.
     pub hash: String,
 }

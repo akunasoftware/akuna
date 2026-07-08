@@ -1,5 +1,9 @@
 //! Stack-contained inference helpers.
 
+use std::future::Future;
+
+use tokio::runtime::Handle;
+
 // One fixed stack is enough until stack usage differs by model.
 const FFI_STACK_SIZE: usize = 128 * 1024 * 1024;
 
@@ -27,4 +31,15 @@ where
             format!("FFI stack wrapper panicked: {message}")
         })
     })
+}
+
+/// Runs async work on the current runtime from a larger stack.
+pub(crate) fn run_async<T>(
+    future: impl Future<Output = T> + Send,
+) -> Result<T, String>
+where
+    T: Send,
+{
+    let handle = Handle::current();
+    run(|| handle.block_on(future))
 }

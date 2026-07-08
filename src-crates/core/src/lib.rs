@@ -1,7 +1,8 @@
 //! Akuna core knowledge tooling library.
 //!
-//! Feature-gated modules for file-type detection, embeddings, extraction,
-//! layout, OCR, reranking, and graph storage. Enable only the features you need.
+//! Feature-gated modules for chunking, file-type detection, embeddings,
+//! extraction, indexing, layout, OCR, reranking, and storage. Enable only the
+//! features you need.
 //!
 //! # Example
 //!
@@ -15,7 +16,18 @@
 //! ```
 
 /// Shared crate-local test helpers.
-#[cfg(all(test, feature = "extraction"))]
+#[cfg(all(
+    test,
+    any(
+        feature = "detection",
+        feature = "embedding",
+        feature = "extraction",
+        feature = "index",
+        feature = "layout",
+        feature = "ocr",
+        feature = "reranking"
+    )
+))]
 mod testkit;
 
 /// File-type detection APIs.
@@ -29,6 +41,20 @@ pub mod embedding;
 /// Text reranking APIs.
 #[cfg(feature = "reranking")]
 pub mod reranking;
+
+/// Text chunking APIs.
+#[cfg(feature = "chunking")]
+pub mod chunking;
+#[cfg(any(feature = "index", feature = "storage"))]
+mod hex;
+
+/// Record metadata and filtering shapes.
+#[cfg(feature = "storage")]
+pub mod metadata;
+
+/// Embedded record index APIs.
+#[cfg(feature = "index")]
+pub mod index;
 
 /// Image OCR APIs.
 #[cfg(feature = "ocr")]

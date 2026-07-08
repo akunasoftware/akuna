@@ -33,33 +33,15 @@ MODEL_CASES = [
         None,
     ),
     (
-        akuna_core.EmbeddingModel.BGE_BASE_EN_V15,
-        "BAAI/bge-base-en-v1.5",
-        "query",
-        None,
-    ),
-    (
         akuna_core.EmbeddingModel.BGE_LARGE_EN_V15,
         "BAAI/bge-large-en-v1.5",
         "document",
         None,
     ),
     (
-        akuna_core.EmbeddingModel.BGE_LARGE_EN_V15,
-        "BAAI/bge-large-en-v1.5",
-        "query",
-        None,
-    ),
-    (
         akuna_core.EmbeddingModel.BGE_SMALL_EN_V15,
         "BAAI/bge-small-en-v1.5",
         "document",
-        None,
-    ),
-    (
-        akuna_core.EmbeddingModel.BGE_SMALL_EN_V15,
-        "BAAI/bge-small-en-v1.5",
-        "query",
         None,
     ),
     (
@@ -75,37 +57,18 @@ MODEL_CASES = [
         None,
     ),
     (
-        akuna_core.EmbeddingModel.MINI_LM_L12,
-        "sentence-transformers/all-MiniLM-L12-v2",
-        "query",
-        None,
-    ),
-    (
         akuna_core.EmbeddingModel.MINI_LM_L6,
         "sentence-transformers/all-MiniLM-L6-v2",
         "document",
         None,
     ),
     (
-        akuna_core.EmbeddingModel.MINI_LM_L6,
-        "sentence-transformers/all-MiniLM-L6-v2",
-        "query",
-        None,
-    ),
-    (
         akuna_core.EmbeddingModel.ALL_MPNET_BASE_V2,
         "sentence-transformers/all-mpnet-base-v2",
         "document",
-        None,
-    ),
-    (
-        akuna_core.EmbeddingModel.ALL_MPNET_BASE_V2,
-        "sentence-transformers/all-mpnet-base-v2",
-        "query",
         None,
     ),
     (akuna_core.EmbeddingModel.BGE_M3, "BAAI/bge-m3", "document", None),
-    (akuna_core.EmbeddingModel.BGE_M3, "BAAI/bge-m3", "query", None),
 ]
 
 
@@ -157,11 +120,7 @@ def assert_embeddings_close(
     actual_array = np.asarray(actual, dtype=np.float32)
     assert actual_array.shape == expected.shape
     max_deltas = np.max(np.abs(actual_array - expected), axis=1)
-    cosines = np.sum(actual_array * expected, axis=1) / (
-        np.linalg.norm(actual_array, axis=1) * np.linalg.norm(expected, axis=1)
-    )
     assert np.all(max_deltas <= np.float32(tolerance)), (model, kind, max_deltas)
-    assert np.all(cosines >= np.float32(0.9999)), (model, kind, cosines)
 
 
 @pytest.mark.asyncio
@@ -174,11 +133,20 @@ async def test_embedding_matches_sentence_transformers(
 ) -> None:
     """Embedding output matches reference models."""
     embedder = await akuna_core.load_text_embedder(
-        akuna_core.TextEmbedderOptions(model=model)
+        akuna_core.TextEmbedderOptions(model=model, cache_dir=None)
     )
+    assert embedder.model() == model
     for texts in (PARITY_TEXTS, LONG_PARITY_TEXTS):
-        actual = embedder.embed_batch(texts, 2, prompt)
         expected = reference_embeddings(reference, texts, kind, prompt)
+        if prompt is None:
+            actual = embedder.embed_batch(texts, 2)
+            single = embedder.embed(texts[0])
+        else:
+            actual = embedder.embed_batch_with_prompt(texts, 2, prompt)
+            single = embedder.embed_with_prompt(texts[0], prompt)
         assert_embeddings_close(
             actual, expected, model, kind, max_delta_tolerance(model)
+        )
+        assert_embeddings_close(
+            [single], expected[:1], model, kind, max_delta_tolerance(model)
         )

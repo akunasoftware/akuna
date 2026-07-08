@@ -24,7 +24,10 @@ use std::path::Path;
 use burn_dispatch::DispatchDevice;
 
 use self::models::pp_ocr::runtime::PpOcrRuntime;
-use crate::ml::backend::{self, Backend};
+use crate::ml::{
+    backend::{self, Backend},
+    boxed_model_error,
+};
 pub use error::OcrError;
 pub use output::{OcrBlock, OcrBlockKind, OcrPage, OcrRect};
 
@@ -41,12 +44,15 @@ pub use output::{OcrBlock, OcrBlockKind, OcrPage, OcrRect};
     utoipa::ToSchema,
 )]
 pub enum OcrDetectionModel {
-    /// PaddleOCR PP-OCRv6 tiny detector.
+    /// `PaddlePaddle/PP-OCRv6_tiny_det_safetensors`.
+    #[serde(alias = "PpOcrV6TinyDet")]
     PpOcrV6Tiny,
-    /// PaddleOCR PP-OCRv6 small detector.
+    /// `PaddlePaddle/PP-OCRv6_small_det_safetensors`.
+    #[serde(alias = "PpOcrV6SmallDet")]
     PpOcrV6Small,
-    /// PaddleOCR PP-OCRv6 medium detector.
+    /// `PaddlePaddle/PP-OCRv6_medium_det_safetensors`.
     #[default]
+    #[serde(alias = "PpOcrV6MediumDet")]
     PpOcrV6Medium,
 }
 
@@ -63,12 +69,15 @@ pub enum OcrDetectionModel {
     utoipa::ToSchema,
 )]
 pub enum OcrRecognitionModel {
-    /// PaddleOCR PP-OCRv6 tiny recognizer.
+    /// `PaddlePaddle/PP-OCRv6_tiny_rec_safetensors`.
+    #[serde(alias = "PpOcrV6TinyRec")]
     PpOcrV6Tiny,
-    /// PaddleOCR PP-OCRv6 small recognizer.
+    /// `PaddlePaddle/PP-OCRv6_small_rec_safetensors`.
+    #[serde(alias = "PpOcrV6SmallRec")]
     PpOcrV6Small,
-    /// PaddleOCR PP-OCRv6 medium recognizer.
+    /// `PaddlePaddle/PP-OCRv6_medium_rec_safetensors`.
     #[default]
+    #[serde(alias = "PpOcrV6MediumRec")]
     PpOcrV6Medium,
 }
 
@@ -88,11 +97,32 @@ impl std::fmt::Display for OcrRecognitionModel {
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct OcrEngineOptions {
     /// Region detector used before recognition.
+    #[serde(alias = "detector")]
     pub detection_model: OcrDetectionModel,
     /// Text recognizer used after detection.
+    #[serde(alias = "recognizer")]
     pub recognition_model: OcrRecognitionModel,
     /// Optional model download cache directory.
     pub cache_dir: Option<std::path::PathBuf>,
+}
+
+/// Configured OCR detection and recognition models.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Deserialize,
+    serde::Serialize,
+    utoipa::ToSchema,
+)]
+pub struct OcrPipeline {
+    /// Region detector used before recognition.
+    pub detection_model: OcrDetectionModel,
+    /// Text recognizer used after detection.
+    pub recognition_model: OcrRecognitionModel,
 }
 
 /// OCR engine that detects and recognizes text in page images.
@@ -119,7 +149,9 @@ impl OcrEngine {
             options.cache_dir,
         )
         .await
-        .map_err(|source| OcrError::Load { source })?;
+        .map_err(|source| OcrError::Load {
+            source: boxed_model_error(source),
+        })?;
 
         Ok(Self {
             model: Box::new(model),
@@ -148,11 +180,19 @@ impl OcrEngine {
             .map_err(|source| OcrError::DecodeImage { source })?;
         self.model
             .extract_page(&image, &self.device)
-            .map_err(|source| OcrError::Inference { source })
+            .map_err(|source| OcrError::Inference {
+                source: boxed_model_error(source),
+            })
     }
 
     /// Returns the configured detection and recognition models.
-    pub fn pipeline(&self) -> (OcrDetectionModel, OcrRecognitionModel) {
-        (self.model.detection_model, self.model.recognition_model)
+    pub fn pipeline(&self) -> OcrPipeline {
+        OcrPipeline {
+            detection_model: self.model.detection_model,
+            recognition_model: self.model.recognition_model,
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

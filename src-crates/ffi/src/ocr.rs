@@ -1,4 +1,12 @@
 //! OCR bindings.
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), akuna_ffi::ocr::OcrError> {
+//! let ocr = akuna_ffi::ocr::load_ocr_engine(None).await?;
+//! let _pipeline = ocr.pipeline();
+//! # Ok(())
+//! # }
+//! ```
 
 use std::path::{Path, PathBuf};
 
@@ -75,6 +83,15 @@ pub struct OcrEngineOptions {
     pub cache_dir: Option<String>,
 }
 
+/// Configured OCR model pipeline.
+#[derive(uniffi::Record)]
+pub struct OcrPipeline {
+    /// Region detector model.
+    pub detection_model: OcrDetectionModel,
+    /// Text recognizer model.
+    pub recognition_model: OcrRecognitionModel,
+}
+
 /// OCR output for one page image.
 #[derive(uniffi::Record)]
 pub struct OcrPage {
@@ -124,8 +141,8 @@ pub async fn load_ocr_engine(
     options: Option<OcrEngineOptions>,
 ) -> Result<OcrEngine, OcrError> {
     let options = options.map(Into::into).unwrap_or_default();
-    let inner = core_ocr::OcrEngine::new(options)
-        .await
+    let inner = crate::stack::run_async(core_ocr::OcrEngine::new(options))
+        .map_err(inference_error)?
         .map_err(OcrError::from)?;
     Ok(OcrEngine { inner })
 }
@@ -138,6 +155,19 @@ impl OcrEngine {
             .map_err(inference_error)?
             .map(OcrPage::from)
             .map_err(OcrError::from)
+    }
+
+    /// Extracts OCR text from encoded image bytes.
+    pub fn extract_bytes(&self, data: Vec<u8>) -> Result<OcrPage, OcrError> {
+        crate::stack::run(|| self.inner.extract_bytes(&data))
+            .map_err(inference_error)?
+            .map(OcrPage::from)
+            .map_err(OcrError::from)
+    }
+
+    /// Returns the configured detection and recognition models.
+    pub fn pipeline(&self) -> OcrPipeline {
+        self.inner.pipeline().into()
     }
 }
 
@@ -161,12 +191,32 @@ impl From<OcrDetectionModel> for core_ocr::OcrDetectionModel {
     }
 }
 
+impl From<core_ocr::OcrDetectionModel> for OcrDetectionModel {
+    fn from(value: core_ocr::OcrDetectionModel) -> Self {
+        match value {
+            core_ocr::OcrDetectionModel::PpOcrV6Tiny => Self::PpOcrV6Tiny,
+            core_ocr::OcrDetectionModel::PpOcrV6Small => Self::PpOcrV6Small,
+            core_ocr::OcrDetectionModel::PpOcrV6Medium => Self::PpOcrV6Medium,
+        }
+    }
+}
+
 impl From<OcrRecognitionModel> for core_ocr::OcrRecognitionModel {
     fn from(value: OcrRecognitionModel) -> Self {
         match value {
             OcrRecognitionModel::PpOcrV6Tiny => Self::PpOcrV6Tiny,
             OcrRecognitionModel::PpOcrV6Small => Self::PpOcrV6Small,
             OcrRecognitionModel::PpOcrV6Medium => Self::PpOcrV6Medium,
+        }
+    }
+}
+
+impl From<core_ocr::OcrRecognitionModel> for OcrRecognitionModel {
+    fn from(value: core_ocr::OcrRecognitionModel) -> Self {
+        match value {
+            core_ocr::OcrRecognitionModel::PpOcrV6Tiny => Self::PpOcrV6Tiny,
+            core_ocr::OcrRecognitionModel::PpOcrV6Small => Self::PpOcrV6Small,
+            core_ocr::OcrRecognitionModel::PpOcrV6Medium => Self::PpOcrV6Medium,
         }
     }
 }
@@ -199,6 +249,15 @@ impl From<core_ocr::OcrRect> for OcrRect {
             y: value.y,
             width: value.width,
             height: value.height,
+        }
+    }
+}
+
+impl From<core_ocr::OcrPipeline> for OcrPipeline {
+    fn from(value: core_ocr::OcrPipeline) -> Self {
+        Self {
+            detection_model: value.detection_model.into(),
+            recognition_model: value.recognition_model.into(),
         }
     }
 }

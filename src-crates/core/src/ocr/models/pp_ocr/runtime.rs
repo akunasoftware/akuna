@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use burn::tensor::backend::Backend;
 use burn::tensor::{Tensor, TensorData};
 use image::{DynamicImage, Rgb, RgbImage};
 use safetensors::SafeTensors;
 
-use crate::ocr::models::pp_ocr::dictionary::load_dictionary;
+use crate::ml::fetch_hf_weight;
 use crate::ocr::models::pp_ocr::native::det::PpOcrTextDetector;
 use crate::ocr::models::pp_ocr::native::det_medium::PpOcrTextDetectorMedium;
 use crate::ocr::models::pp_ocr::native::rec::PpOcrTextRecognizer;
@@ -19,8 +19,7 @@ use crate::ocr::models::pp_ocr::preprocess::{
     PpOcrInput, preprocess_detector, preprocess_recognizer,
 };
 use crate::ocr::models::pp_ocr::spec::{
-    det_safetensors_repo, detector_config, rec_safetensors_repo,
-    recognizer_config,
+    detector_config, detector_weight, recognizer_config, recognizer_weight,
 };
 use crate::ocr::{
     OcrBlock, OcrBlockKind, OcrDetectionModel, OcrPage, OcrRecognitionModel,
@@ -60,13 +59,19 @@ where
     ) -> Result<Self> {
         let recognizer_cfg = recognizer_config(recognition_model);
         let dictionary =
-            load_dictionary(&recognizer_cfg, cache_dir.as_deref()).await?;
-        let detector_model = DetectorModel::load(detection_model, device)?;
+            crate::ocr::models::pp_ocr::dictionary::load_dictionary(
+                recognition_model,
+            )?;
+        let detector_model =
+            DetectorModel::load(detection_model, device, cache_dir.as_deref())
+                .await?;
         let recognizer_model = RecognizerModel::load(
             recognition_model,
             recognizer_cfg.num_classes,
             device,
-        )?;
+            cache_dir.as_deref(),
+        )
+        .await?;
 
         Ok(Self {
             detection_model,
@@ -105,17 +110,18 @@ where
             let recognizer_tensor = input_tensor(recognizer_input, device);
             let recognizer_output =
                 self.recognizer_model.forward(recognizer_tensor);
-            let text = postprocess_recognizer(
+            let recognized = postprocess_recognizer(
                 recognizer_output,
                 &self.dictionary,
                 &recognizer_config,
             )?;
+            let text = recognized.text.trim();
             // Drop boxes the recognizer reads as empty.
-            if !text.text.trim().is_empty() {
+            if !text.is_empty() {
                 blocks.push(OcrBlock {
-                    text: text.text,
+                    text: text.to_owned(),
                     bbox: OcrRect::from_points(text_box.points),
-                    confidence: Some(text.confidence),
+                    confidence: Some(recognized.confidence),
                     kind: OcrBlockKind::Text,
                 });
             }
@@ -130,8 +136,20 @@ where
 }
 
 impl<B: Backend<FloatElem = f32>> DetectorModel<B> {
-    fn load(model: OcrDetectionModel, device: &B::Device) -> Result<Self> {
-        let bytes = native::fetch_safetensors(det_safetensors_repo(model))?;
+    async fn load(
+        model: OcrDetectionModel,
+        device: &B::Device,
+        cache_dir: Option<&Path>,
+    ) -> Result<Self> {
+        let weight = detector_weight(model);
+        let path =
+            fetch_hf_weight(weight, cache_dir, "PaddleOCR detector").await?;
+        let bytes = std::fs::read(&path).with_context(|| {
+            format!(
+                "failed to read PaddleOCR detector weights at {}",
+                path.display()
+            )
+        })?;
         let tensors = SafeTensors::deserialize(&bytes)?;
         match model {
             // Medium uses the LKPAN detector variant.
@@ -160,12 +178,21 @@ impl<B: Backend<FloatElem = f32>> DetectorModel<B> {
 }
 
 impl<B: Backend<FloatElem = f32>> RecognizerModel<B> {
-    fn load(
+    async fn load(
         model: OcrRecognitionModel,
         num_classes: usize,
         device: &B::Device,
+        cache_dir: Option<&Path>,
     ) -> Result<Self> {
-        let bytes = native::fetch_safetensors(rec_safetensors_repo(model))?;
+        let weight = recognizer_weight(model);
+        let path =
+            fetch_hf_weight(weight, cache_dir, "PaddleOCR recognizer").await?;
+        let bytes = std::fs::read(&path).with_context(|| {
+            format!(
+                "failed to read PaddleOCR recognizer weights at {}",
+                path.display()
+            )
+        })?;
         let tensors = SafeTensors::deserialize(&bytes)?;
         match model {
             // Tiny uses the conv-only head variant.
@@ -208,7 +235,10 @@ fn input_tensor<B: Backend>(
     Tensor::<B, 4>::from_data(data, device)
 }
 
-fn crop_box(image: &RgbImage, points: [[f32; 2]; 4]) -> Result<DynamicImage> {
+pub(super) fn crop_box(
+    image: &RgbImage,
+    points: [[f32; 2]; 4],
+) -> Result<DynamicImage> {
     // The current detector is closest to PaddleOCR parity with truncated boxes.
     let points =
         points.map(|point| [point[0] as i32 as f32, point[1] as i32 as f32]);
@@ -222,7 +252,7 @@ fn crop_box(image: &RgbImage, points: [[f32; 2]; 4]) -> Result<DynamicImage> {
 
     let mut crop = warp_crop(image, points, crop_width, crop_height);
     if crop.height() as f32 / crop.width() as f32 >= 1.5 {
-        crop = image::imageops::rotate90(&crop);
+        crop = image::imageops::rotate270(&crop);
     }
 
     Ok(DynamicImage::ImageRgb8(crop))

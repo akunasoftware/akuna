@@ -12,7 +12,10 @@ use tokio::net::TcpListener;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::OpenApi;
 
-use akuna_core::storage::{GraphEdge, GraphNode, GraphNodeSearchResult};
+use akuna_core::index::{
+    IndexSearchResult, MetadataFilter, MetadataValue, Record,
+    RecordRelationship,
+};
 
 use crate::api::{error::ApiErrorBody, knowledge};
 
@@ -25,16 +28,19 @@ pub(crate) const OPENAPI_FILE_NAME: &str = "openapi.json";
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
-        knowledge::create_node,
-        knowledge::search_nodes,
-        knowledge::read_node,
-        knowledge::update_node,
-        knowledge::delete_node,
-        knowledge::create_edge,
-        knowledge::update_edge,
-        knowledge::delete_edge,
+        knowledge::upsert_records,
+        knowledge::read_record,
+        knowledge::delete_record,
+        knowledge::search_records,
     ),
-    components(schemas(ApiErrorBody, GraphNode, GraphEdge, GraphNodeSearchResult)),
+    components(schemas(
+        ApiErrorBody,
+        IndexSearchResult,
+        MetadataFilter,
+        MetadataValue,
+        Record,
+        RecordRelationship,
+    )),
     servers((url = API_SERVER))
 )]
 struct ApiDoc;
@@ -47,8 +53,9 @@ pub async fn run() -> Result<()> {
         .with_context(|| format!("Failed to bind API address {address}"))?;
     let openapi = ApiDoc::openapi();
     let api = knowledge::router()
+        .await
         .map_err(|error| {
-            anyhow::anyhow!("Failed to initialize graph API: {error:?}")
+            anyhow::anyhow!("Failed to initialize knowledge API: {error:?}")
         })?
         .route(
             "/openapi.json",

@@ -53,8 +53,10 @@ def reference_scores(pairs: list[tuple[str, str]]) -> np.ndarray:
 async def test_reranking_scores_match_transformers() -> None:
     """Reranker scores match reference output."""
     reranker = await akuna_core.load_text_reranker(None)
+    expected = reference_scores(PAIRS)
+    assert reranker.score(*PAIRS[0]) == pytest.approx(expected[0], abs=5e-5)
     actual = np.asarray(
-        reranker.score_pairs(
+        reranker.score_batch(
             [
                 akuna_core.TextPair(query=query, document=document)
                 for query, document in PAIRS
@@ -63,7 +65,6 @@ async def test_reranking_scores_match_transformers() -> None:
         ),
         dtype=np.float32,
     )
-    expected = reference_scores(PAIRS)
 
     # Floor measured vs FlagEmbedding: worst score delta 5.7e-6 across pairs.
     assert actual.shape == expected.shape
@@ -75,9 +76,21 @@ async def test_rerank_matches_transformers() -> None:
     """Rerank output matches reference ordering and scores."""
     reranker = await akuna_core.load_text_reranker(None)
     options = akuna_core.RerankOptions(top_k=2, normalize=True, batch_size=2)
-    actual = reranker.rerank(QUERY, DOCUMENTS, options)
-
     raw_scores = reference_scores([(QUERY, document) for document in DOCUMENTS])
+    default = reranker.rerank(QUERY, DOCUMENTS)
+    assert [result.index for result in default] == list(np.argsort(-raw_scores))
+    assert [result.document for result in default] == [
+        DOCUMENTS[index] for index in np.argsort(-raw_scores)
+    ]
+    assert np.all(
+        np.abs(
+            np.asarray([result.score for result in default], dtype=np.float32)
+            - raw_scores[np.argsort(-raw_scores)]
+        )
+        <= np.float32(5e-5)
+    )
+
+    actual = reranker.rerank_with_options(QUERY, DOCUMENTS, options)
     scores = 1.0 / (1.0 + np.exp(-raw_scores))
     expected = sorted(
         enumerate(zip(DOCUMENTS, scores, strict=True)),

@@ -55,15 +55,24 @@ fn is_markup(mime_type: &str) -> bool {
 fn plain_text_from_markup(markup: &str) -> String {
     let mut text = String::with_capacity(markup.len());
     let mut in_tag = false;
+    let mut quote = None;
     let mut last_was_whitespace = true;
 
     for character in markup.chars() {
         match character {
-            '<' => {
+            '<' if !in_tag => {
                 in_tag = true;
+                quote = None;
                 push_space(&mut text, &mut last_was_whitespace);
             }
-            '>' if in_tag => in_tag = false,
+            '"' | '\'' if in_tag => {
+                if quote == Some(character) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(character);
+                }
+            }
+            '>' if in_tag && quote.is_none() => in_tag = false,
             _ if in_tag => {}
             _ if character.is_whitespace() => {
                 push_space(&mut text, &mut last_was_whitespace);
@@ -75,7 +84,7 @@ fn plain_text_from_markup(markup: &str) -> String {
         }
     }
 
-    decode_common_entities(text.trim())
+    decode_common_entities(text.trim()).trim().to_string()
 }
 
 /// Appends one whitespace separator when needed.

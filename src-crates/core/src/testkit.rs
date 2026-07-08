@@ -11,11 +11,14 @@ static CORPUS_FIXTURES: OnceLock<Mutex<HashMap<String, PathBuf>>> =
 /// Returns a named test corpus fixture.
 pub(crate) fn corpus_fixture(name: &str) -> Result<PathBuf> {
     let cache = CORPUS_FIXTURES.get_or_init(Default::default);
-    let mut cache = cache
-        .lock()
-        .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
-    if let Some(path) = cache.get(name) {
-        return Ok(path.clone());
+    let cached = {
+        let cache = cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
+        cache.get(name).cloned()
+    };
+    if let Some(path) = cached {
+        return Ok(path);
     }
 
     let client = hf_hub::api::sync::ApiBuilder::new()
@@ -23,12 +26,14 @@ pub(crate) fn corpus_fixture(name: &str) -> Result<PathBuf> {
         .build()?;
     let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
     let path = repo.download(&format!("{HF_REPO_CONTENT_PREFIX}/{name}"))?;
+    let mut cache = cache
+        .lock()
+        .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
     cache.insert(name.to_string(), path.clone());
     Ok(path)
 }
 
 /// Runs model-heavy tests on a larger stack.
-#[cfg(feature = "ocr")]
 pub(crate) fn run_with_model_stack<F>(f: F) -> Result<()>
 where
     F: FnOnce() -> Result<()> + Send + 'static,

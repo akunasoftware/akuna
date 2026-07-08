@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import akuna_core
+import cv2
+import numpy as np
 import pytest
 from huggingface_hub import hf_hub_download
 from paddleocr import PaddleOCR
@@ -9,14 +11,18 @@ from paddleocr import PaddleOCR
 HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
 IMAGE_FIXTURE = "content/fixtures/text-hidpi.png"
 PADDLE_OCR_PARAMS = {
-    "text_det_limit_side_len": 64,
+    "text_det_limit_side_len": 736,
     "text_det_limit_type": "min",
-    "text_det_thresh": 0.3,
-    "text_det_box_thresh": 0.6,
-    "text_det_unclip_ratio": 1.5,
+    "text_det_thresh": 0.2,
+    "text_det_unclip_ratio": 1.4,
     "text_recognition_batch_size": 1,
     "text_rec_score_thresh": 0.0,
 }
+PADDLE_BOX_THRESH = {"tiny": 0.4, "small": 0.45, "medium": 0.45}
+# Calibrated against PaddleOCR on the hosted fixture: 0.8455 minimum IoU and
+# 0.034561 maximum recognition-score delta across supported model tiers.
+BLOCK_IOU_THRESHOLD = np.float32(0.84)
+SCORE_TOLERANCE = np.float32(0.035)
 TIERS = {
     "tiny": (
         akuna_core.OcrDetectionModel.PP_OCR_V6_TINY,
@@ -35,8 +41,8 @@ TIERS = {
         "PP-OCRv6_small_rec",
         # Measured PaddleOCR floor after unclip parity: 1.0.
         0.999,
-        # Measured fixture-truth floor: 0.997103.
-        0.997,
+        # Measured fixture-truth floor: 0.996376.
+        0.996,
     ),
     "medium": (
         akuna_core.OcrDetectionModel.PP_OCR_V6_MEDIUM,
@@ -130,6 +136,88 @@ def similarity(left: str, right: str) -> float:
     return 1.0 - (levenshtein(left, right) / max(len(left), len(right)))
 
 
+def iou(left: np.ndarray, right: np.ndarray) -> np.float32:
+    """Return axis-aligned IoU for [x, y, width, height]."""
+    left_x1, left_y1, left_x2, left_y2 = (
+        left[0],
+        left[1],
+        left[0] + left[2],
+        left[1] + left[3],
+    )
+    right_x1, right_y1, right_x2, right_y2 = (
+        right[0],
+        right[1],
+        right[0] + right[2],
+        right[1] + right[3],
+    )
+    inter_width = max(np.float32(0.0), min(left_x2, right_x2) - max(left_x1, right_x1))
+    inter_height = max(np.float32(0.0), min(left_y2, right_y2) - max(left_y1, right_y1))
+    intersection = inter_width * inter_height
+    union = left[2] * left[3] + right[2] * right[3] - intersection
+    return np.float32(0.0) if union <= 0 else np.float32(intersection / union)
+
+
+def reference_blocks(
+    result: dict[str, object],
+) -> list[tuple[str, np.ndarray, np.float32]]:
+    """Return PaddleOCR text, rectangles, and recognition confidence."""
+    texts = result["rec_texts"]
+    scores = result["rec_scores"]
+    boxes = result["rec_boxes"]
+    assert isinstance(texts, list)
+    assert isinstance(scores, list)
+    assert isinstance(boxes, list)
+    return [
+        (
+            str(text),
+            np.array(
+                [box[0], box[1], box[2] - box[0], box[3] - box[1]],
+                dtype=np.float32,
+            ),
+            np.float32(score),
+        )
+        for text, score, box in zip(texts, scores, boxes, strict=True)
+    ]
+
+
+def assert_page_matches(
+    page: akuna_core.OcrPage,
+    expected: list[tuple[str, np.ndarray, np.float32]],
+    width: int,
+    height: int,
+) -> None:
+    """Assert every OCR output field matches the PaddleOCR reference."""
+    assert page.width == width
+    assert page.height == height
+    assert len(page.blocks) == len(expected)
+
+    consumed = [False] * len(expected)
+    score_deltas = []
+    for block in page.blocks:
+        assert block.kind == akuna_core.OcrBlockKind.TEXT
+        assert block.confidence is not None
+        actual_bbox = np.array(
+            [block.bbox.x, block.bbox.y, block.bbox.width, block.bbox.height],
+            dtype=np.float32,
+        )
+        candidates = [
+            (iou(actual_bbox, expected_bbox), index)
+            for index, (_, expected_bbox, _) in enumerate(expected)
+            if not consumed[index]
+        ]
+        best_iou, index = max(candidates, key=lambda item: item[0])
+        assert best_iou >= BLOCK_IOU_THRESHOLD
+        expected_text, _, expected_score = expected[index]
+        assert (
+            similarity(normalise_text(block.text), normalise_text(expected_text))
+            >= 0.99
+        )
+        score_deltas.append(abs(block.confidence - expected_score))
+        consumed[index] = True
+
+    assert max(score_deltas, default=np.float32(0.0)) <= SCORE_TOLERANCE
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tier", TIERS)
 async def test_ocr_matches_paddleocr(tier: str) -> None:
@@ -150,9 +238,6 @@ async def test_ocr_matches_paddleocr(tier: str) -> None:
             cache_dir=None,
         )
     )
-    actual = aggregated_text(
-        [block.text for block in ocr.extract_path(str(path)).blocks]
-    )
     reference = PaddleOCR(
         text_detection_model_name=ref_detection_model,
         text_recognition_model_name=ref_recognition_model,
@@ -161,10 +246,25 @@ async def test_ocr_matches_paddleocr(tier: str) -> None:
         use_textline_orientation=False,
         device="cpu",
         **PADDLE_OCR_PARAMS,
+        text_det_box_thresh=PADDLE_BOX_THRESH[tier],
     )
-    expected = aggregated_text(
-        list(reference.predict(str(path)))[0].json["res"]["rec_texts"]
+    reference_result = list(reference.predict(str(path)))[0].json["res"]
+    assert isinstance(reference_result, dict)
+    expected_blocks = reference_blocks(reference_result)
+    expected = aggregated_text([text for text, _, _ in expected_blocks])
+    image = cv2.imread(str(path))
+    assert image is not None
+    height, width = image.shape[:2]
+    assert ocr.pipeline() == akuna_core.OcrPipeline(
+        detection_model=detection_model,
+        recognition_model=recognition_model,
     )
+
+    bytes_page = ocr.extract_bytes(path.read_bytes())
+    path_page = ocr.extract_path(str(path))
+    assert_page_matches(bytes_page, expected_blocks, width, height)
+    assert_page_matches(path_page, expected_blocks, width, height)
+    actual = aggregated_text([block.text for block in bytes_page.blocks])
 
     assert similarity(actual, expected) >= reference_threshold, (
         tier,

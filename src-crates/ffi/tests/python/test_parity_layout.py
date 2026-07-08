@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import akuna_core
+import cv2
 import numpy as np
 import pytest
 from huggingface_hub import hf_hub_download
@@ -10,7 +11,8 @@ from paddlex import create_model
 HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
 IMAGE_FIXTURE = "content/fixtures/text-hidpi.png"
 IOU_THRESHOLD = np.float32(0.85)
-UNMATCHED_TOLERANCE = 0.0
+# Calibrated from PP-DocLayoutV3 parity on the hosted fixture: 0.003990 max.
+SCORE_TOLERANCE = np.float32(0.005)
 
 
 def fixture_path(name: str) -> Path:
@@ -18,12 +20,12 @@ def fixture_path(name: str) -> Path:
     return Path(hf_hub_download(HF_REPO_TEST_CORPUS, name, repo_type="dataset"))
 
 
-def reference_blocks(image: Path) -> list[tuple[str, np.ndarray]]:
+def reference_blocks(image: Path) -> list[tuple[str, np.ndarray, np.float32, int]]:
     """Return expected layout blocks."""
     model = create_model("PP-DocLayoutV3")
     page = next(model.predict(str(image)))
     blocks = []
-    for box in page.get("boxes") or []:
+    for box in page.json["res"]["boxes"]:
         coordinate = box.get("coordinate")
         if not coordinate or len(coordinate) != 4:
             continue
@@ -32,6 +34,8 @@ def reference_blocks(image: Path) -> list[tuple[str, np.ndarray]]:
             (
                 str(box.get("label", "")),
                 np.array([x1, y1, x2 - x1, y2 - y1], dtype=np.float32),
+                np.float32(box["score"]),
+                int(box["order"]),
             )
         )
     return blocks
@@ -49,20 +53,19 @@ def iou(a: np.ndarray, b: np.ndarray) -> np.float32:
 
 
 def assert_blocks_match(
-    actual: list[tuple[str, np.ndarray]],
-    expected: list[tuple[str, np.ndarray]],
+    actual: list[tuple[str, np.ndarray, np.float32, int]],
+    expected: list[tuple[str, np.ndarray, np.float32, int]],
+    *,
+    match_order: bool,
 ) -> None:
     """Assert layout blocks match by label and IoU."""
-    actual_labels = {label for label, _ in actual}
-    expected_labels = {label for label, _ in expected}
-    assert actual_labels == expected_labels
-
     unmatched_actual = 0
     consumed = [False] * len(expected)
-    for actual_label, actual_bbox in actual:
+    score_deltas = []
+    for actual_label, actual_bbox, actual_score, actual_order in actual:
         candidates = [
             (iou(actual_bbox, expected_bbox), index)
-            for index, (expected_label, expected_bbox) in enumerate(expected)
+            for index, (expected_label, expected_bbox, _, _) in enumerate(expected)
             if not consumed[index] and actual_label == expected_label
         ]
         if not candidates:
@@ -70,22 +73,39 @@ def assert_blocks_match(
             continue
         best_iou, index = max(candidates, key=lambda item: item[0])
         if best_iou >= IOU_THRESHOLD:
+            _, _, expected_score, expected_order = expected[index]
+            score_deltas.append(abs(actual_score - expected_score))
+            if match_order:
+                assert actual_order == expected_order
             consumed[index] = True
         else:
             unmatched_actual += 1
 
-    unmatched_expected = sum(not item for item in consumed)
-    max_unmatched = int(np.ceil(max(len(actual), len(expected)) * UNMATCHED_TOLERANCE))
-    assert unmatched_actual <= max_unmatched
-    assert unmatched_expected <= max_unmatched
+    assert not unmatched_actual
+    assert all(consumed)
+    assert max(score_deltas, default=np.float32(0.0)) <= SCORE_TOLERANCE
 
 
 @pytest.mark.asyncio
 async def test_layout_matches_paddlex() -> None:
     """Layout detection matches reference blocks."""
     path = fixture_path(IMAGE_FIXTURE)
-    detector = await akuna_core.load_layout_detector(None)
-    page = detector.detect_path(str(path))
+    detector = await akuna_core.load_layout_detector(
+        akuna_core.LayoutDetectorOptions(
+            model=akuna_core.LayoutModel.PP_DOC_LAYOUT_V3,
+            cache_dir=None,
+        )
+    )
+    path_page = detector.detect_path(str(path))
+    bytes_page = detector.detect_bytes(path.read_bytes())
+    image = cv2.imread(str(path))
+    assert image is not None
+    height, width = image.shape[:2]
+
+    for page in (path_page, bytes_page):
+        assert page.width == width
+        assert page.height == height
+
     actual = [
         (
             block.label,
@@ -93,7 +113,31 @@ async def test_layout_matches_paddlex() -> None:
                 [block.bbox.x, block.bbox.y, block.bbox.width, block.bbox.height],
                 dtype=np.float32,
             ),
+            np.float32(block.confidence),
+            block.order,
         )
-        for block in page.blocks
+        for block in path_page.blocks
     ]
-    assert_blocks_match(actual, reference_blocks(path))
+    expected = reference_blocks(path)
+    assert_blocks_match(actual, expected, match_order=False)
+    assert_blocks_match(
+        [
+            (
+                block.label,
+                np.array(
+                    [
+                        block.bbox.x,
+                        block.bbox.y,
+                        block.bbox.width,
+                        block.bbox.height,
+                    ],
+                    dtype=np.float32,
+                ),
+                np.float32(block.confidence),
+                block.order,
+            )
+            for block in bytes_page.blocks
+        ],
+        actual,
+        match_order=True,
+    )

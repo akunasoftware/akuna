@@ -19,12 +19,14 @@
 
 mod config;
 mod detector;
+mod errors;
 mod models;
+mod types;
 mod vendor;
 
 #[cfg(test)]
 mod tests;
 
 pub use detector::FileTypeDetector;
-pub use models::magika::MagikaInferenceError;
-pub use vendor::file::{FileType, InferredType, OverwriteReason, TypeInfo};
+pub use errors::DetectionError;
+pub use types::{DetectionOrigin, FileType, FileTypeInfo};

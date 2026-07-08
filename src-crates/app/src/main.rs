@@ -4,9 +4,9 @@
 //! # Example
 //!
 //! ```text
-//! akuna --help
-//! akuna extract ./notes.md --metadata --text
-//! akuna serve
+//! <app> --help
+//! <app> extract ./notes.md --metadata --text
+//! <app> serve
 //! ```
 
 mod api;
@@ -15,6 +15,8 @@ mod tracing;
 
 use anyhow::Result;
 use serde::Serialize;
+
+pub(crate) const APP_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::extraction::{
@@ -15,7 +15,7 @@ pub(in crate::extraction) async fn extract(
     let ocr = crate::ocr::OcrEngine::new(ocr_options.clone())
         .await
         .map_err(ocr_extraction_error)?;
-    let (_detector, recognizer) = ocr.pipeline();
+    let pipeline_config = ocr.pipeline();
 
     let started = std::time::Instant::now();
     let page = ocr.extract_file(file_path).map_err(ocr_extraction_error)?;
@@ -24,9 +24,9 @@ pub(in crate::extraction) async fn extract(
     let block_count = page.blocks.len();
     let pipeline = vec![pipeline::step(
         ExtractionPipelineStepKind::Recognition,
-        recognizer.to_string(),
+        pipeline_config.recognition_model.to_string(),
         duration_ms,
-        HashMap::from([("texts".to_owned(), block_count as u64)]),
+        BTreeMap::from([("texts".to_owned(), block_count as u64)]),
     )];
 
     Ok(from_ocr_page(&page, pipeline))

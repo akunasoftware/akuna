@@ -1,8 +1,7 @@
 //! Document extraction entry points.
 
-use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use tokio::io::AsyncWriteExt;
 
@@ -53,7 +52,7 @@ async fn from_bytes_with_source_path(
             ExtractionPipelineStepKind::Detection,
             "magika",
             duration_ms,
-            HashMap::new(),
+            BTreeMap::from([("types".to_owned(), 1)]),
         );
         (Some(metadata), vec![step])
     } else {
@@ -107,15 +106,16 @@ async fn extract_content(
     bytes: &[u8],
     source_path: Option<&Path>,
     metadata: &ExtractionMetadata,
-    config: &ExtractionConfig,
+    _config: &ExtractionConfig,
 ) -> Result<DocumentContent, FileExtractionError> {
-    match metadata.mime_type.as_str() {
+    let started = std::time::Instant::now();
+    let (mut content, engine) = match metadata.mime_type.as_str() {
         // PDF documents use structural page extraction.
         "application/pdf" => {
             let file_path =
                 temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            extractors::pdf::extract(&file_path)
+            return extractors::pdf::extract(&file_path);
         }
 
         // Office documents use document-level structural extraction.
@@ -126,7 +126,7 @@ async fn extract_content(
             let file_path =
                 temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            extractors::office::extract(&file_path)
+            return extractors::office::extract(&file_path);
         }
 
         // EPUB needs chapter rendering before text normalization.
@@ -134,8 +134,11 @@ async fn extract_content(
             let file_path =
                 temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            extractors::text::extract_epub(&file_path)
-                .map(|text| content_from_text(text, metadata))
+            (
+                extractors::text::extract_epub(&file_path)
+                    .map(|text| content_from_text(text, metadata))?,
+                "rbook-epub",
+            )
         }
 
         // Markup/text container formats need text normalization.
@@ -144,17 +147,21 @@ async fn extract_content(
         | "application/xml"
         | "text/html"
         | "text/markdown"
-        | "text/xml" => extractors::text::extract_bytes(metadata, bytes)
-            .map(|text| content_from_text(text, metadata)),
-
-        mime_type if mime_type.ends_with("+xml") => {
+        | "text/xml" => (
             extractors::text::extract_bytes(metadata, bytes)
-                .map(|text| content_from_text(text, metadata))
-        }
+                .map(|text| content_from_text(text, metadata))?,
+            "direct",
+        ),
+
+        mime_type if mime_type.ends_with("+xml") => (
+            extractors::text::extract_bytes(metadata, bytes)
+                .map(|text| content_from_text(text, metadata))?,
+            "direct",
+        ),
 
         // Known archive formats are not treated as text fallbacks.
         "application/zip" | "application/vnd.oasis.opendocument.text" => {
-            Err(unsupported_file_type(metadata))
+            return Err(unsupported_file_type(metadata));
         }
 
         // Images use OCR when the feature is enabled.
@@ -163,18 +170,32 @@ async fn extract_content(
             let file_path =
                 temporary_content_file(bytes, source_path, metadata).await?;
             let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            extractors::ocr::extract(&file_path, &config.ocr).await
+            return extractors::ocr::extract(&file_path, &_config.ocr).await;
         }
 
         // Remaining detected text goes through generic parser fallback.
-        _ if metadata.is_text => {
+        _ if metadata.is_text => (
             extractors::text::extract_bytes(metadata, bytes)
-                .map(|text| content_from_text(text, metadata))
-        }
+                .map(|text| content_from_text(text, metadata))?,
+            "direct",
+        ),
 
         // Everything else needs an explicit extractor first.
-        _ => Err(unsupported_file_type(metadata)),
-    }
+        _ => return Err(unsupported_file_type(metadata)),
+    };
+    content.pipeline.insert(
+        0,
+        pipeline::step(
+            ExtractionPipelineStepKind::Parsing,
+            engine,
+            started.elapsed().as_millis() as u64,
+            BTreeMap::from([
+                ("parts".to_owned(), content.parts.len() as u64),
+                ("texts".to_owned(), u64::from(content.text().is_some())),
+            ]),
+        ),
+    );
+    Ok(content)
 }
 
 // Some extractors require a path.

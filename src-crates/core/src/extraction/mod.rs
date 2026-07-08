@@ -23,11 +23,13 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub use crate::chunking::PartKind;
+pub use crate::detection::DetectionOrigin;
 pub use document::{extract_bytes, extract_file};
 pub use errors::FileExtractionError;
 pub(in crate::extraction) use types::DocumentContent;
 pub use types::{
     ExtractionBbox, ExtractionByteRange, ExtractionConfig, ExtractionMetadata,
     ExtractionPart, ExtractionPipelineStep, ExtractionPipelineStepKind,
-    ExtractionProvenance, ExtractionResult, PartKind,
+    ExtractionProvenance, ExtractionResult,
 };

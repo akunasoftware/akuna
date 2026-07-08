@@ -1,6 +1,6 @@
 use burn::tensor::{Tensor, TensorData};
 
-use super::backend::{self, Backend, cpu_device, gpu_available};
+use super::backend::{self, Backend, cpu_device};
 use crate::ml::safe_matmul;
 
 /// The CPU device must run real tensor ops, since it is the fallback used on
@@ -18,12 +18,6 @@ fn cpu_backend_runs_matmul() {
         .to_vec::<f32>()
         .expect("matmul output to f32");
     assert_eq!(out, vec![19.0, 22.0, 43.0, 50.0]);
-}
-
-/// The probe must not panic and must return a definite, stable answer.
-#[test]
-fn gpu_probe_is_stable() {
-    assert_eq!(gpu_available(), gpu_available());
 }
 
 /// Multiplies matrices with a plain CPU reference implementation.
@@ -83,7 +77,10 @@ fn safe_matmul_matches_cpu_for_large_k() {
 
 #[cfg(any(feature = "layout", feature = "ocr"))]
 mod imageproc {
-    use crate::ml::imageproc::{resize_cubic_cv2, resize_linear_cv2};
+    #[cfg(feature = "layout")]
+    use crate::ml::imageproc::resize_cubic_cv2;
+    #[cfg(feature = "ocr")]
+    use crate::ml::imageproc::resize_linear_cv2;
     use image::{DynamicImage, RgbImage};
 
     // A deterministic 17x13 RGB source and its `cv2.resize(..., (8, 6))` output
@@ -107,6 +104,7 @@ mod imageproc {
         132, 124, 99, 169, 129, 116, 206, 134, 133, 243, 139, 150, 24, 144, 167, 61, 149, 184, 98, 154, 201, 135, 159, 218, 172, 164, 235, 209, 169, 252, 246, 174, 13, 27, 179, 30, 64, 184, 47, 101, 189, 64, 138, 194, 81, 175, 199, 98, 212, 204, 115,
     ];
     #[rustfmt::skip]
+    #[cfg(feature = "ocr")]
     const LINEAR_8X6: &[u8] = &[
         27, 34, 33, 106, 44, 69, 184, 55, 105, 23, 65, 142, 86, 76, 178, 164, 87, 214, 163, 97, 101, 65, 108, 30,
         51, 148, 96, 130, 159, 132, 208, 170, 168, 47, 180, 204, 109, 191, 229, 188, 201, 73, 55, 212, 57, 89, 223, 93,
@@ -132,12 +130,14 @@ mod imageproc {
     }
 
     #[test]
+    #[cfg(feature = "ocr")]
     fn linear_matches_cv2_golden() {
         let out = resize_linear_cv2(&src_image(), 8, 6);
         assert_eq!(out.as_raw().as_slice(), LINEAR_8X6, "cv2 INTER_LINEAR");
     }
 
     #[test]
+    #[cfg(feature = "layout")]
     fn cubic_matches_cv2_golden() {
         let out = resize_cubic_cv2(&src_image(), 8, 6);
         assert_eq!(out.as_raw().as_slice(), CUBIC_8X6, "cv2 INTER_CUBIC");
