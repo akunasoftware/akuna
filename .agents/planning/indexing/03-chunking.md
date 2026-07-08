@@ -33,20 +33,34 @@ and its byte range in the source.
   (language-by-extension table, leaf-named-node ranges) as the code
   strategy.
 - Replace the line-based fallback with real prose segmentation: split on
-  blank-line paragraph boundaries, then sentence boundaries for oversized
-  paragraphs. This becomes the default strategy.
-- Strategy selection takes an optional hint (e.g. file extension /
-  content kind) supplied by the caller. Extraction knows its file types
-  and passes them; `Index` has plain text and passes none — prose
-  strategy. Where no hint exists but the content is clearly code, the
-  existing detection capability (`FileTypeDetector`, cheap CPU model) MAY
-  be used to route to the code strategy — wire this only if it slots in
-  cleanly behind the `detection` feature as an optional dependency;
-  otherwise note it as follow-up. Structured segmentation over naive
-  splitting wherever we can get it.
-- Kind enum: move `PartKind` (or a renamed equivalent) into `chunking` as
-  the one shared kind vocabulary; extraction re-exports it so its public
-  API keeps working. One shape per concept.
+  blank-line paragraph boundaries — whole paragraphs, however large.
+  Sentence-level splitting is the PACKER's job (intra-segment split); the
+  segmenter has no size threshold and never sees `ChunkingOptions`.
+- API shape (pinned — mirrors the existing dispatch in
+  `document.rs::content_from_text` so extraction's engine labels and
+  `>1 parts` gate survive): two entries, not one router. The code strategy
+  returns `Option<Vec<Segment>>` (None = unsupported extension / parse
+  error), the prose strategy is infallible. Extraction keeps its
+  try-code-then-fallback dispatch and its `"tree-sitter"` pipeline label.
+  Segments carry raw (untrimmed) source text + kind + byte range; the
+  segmenter drops whitespace-only segments; callers do their own display
+  trimming.
+- `Index` has plain text and no hint — prose strategy. Where no hint
+  exists but the content is clearly code, the existing detection
+  capability MAY route to the code strategy — but `FileTypeDetector` is an
+  async model-loading actor and the segmenter is pure sync functions, so
+  this does NOT slot in cleanly at this layer: leave it as a documented
+  follow-up for `Index` (which is already async and owns models) to do
+  detection-assisted routing itself later. Do not wire ML into `chunking`.
+- Kind enum: `PartKind` moves to `chunking` KEEPING its name; extraction
+  re-exports it (`pub use crate::chunking::PartKind;`) so
+  `akuna_core::extraction::PartKind`, the FFI conversions, and app JSON
+  keep working unchanged. Serde derives travel with it (serde is a
+  non-optional core dep — no gating issue).
+- Prose fallback parts change shape deliberately: paragraph segments emit
+  `PartKind::Paragraph` with byte-range provenance (the old line splitter
+  emitted `Text` with no provenance). App JSON output changes accordingly
+  — sanctioned, part of the intended improvement.
 
 **Extraction consumes it.** `extraction/parts.rs` and `extractors/code.rs`
 become thin calls into `chunking`; extraction keeps owning
@@ -88,10 +102,12 @@ Pinned semantics (these resolve real implementer forks — keep them):
   rationale as a `//` comment.
 - Manual `Default` impl (derived defaults would be zero/false).
 
-**Public surface:** `ChunkingOptions`, the kind enum, and whatever
-segment-level entry extraction needs. The packer's chunk output stays
-crate-private — chunks never cross the public API. Docstrings purpose-only;
-mechanics like the boundary hierarchy live in `//` comments.
+**Public surface:** `ChunkingOptions` and the kind enum are `pub`; the
+segment entries extraction consumes and the ENTIRE packer are `pub(crate)`
+(a `pub fn` cannot return crate-private types, and chunks never cross the
+public API). Docstrings purpose-only; mechanics like the boundary
+hierarchy live in `//` comments. Prefer plain string-literal packer tests
+over corpus fixtures — avoids widening the `testkit` feature gate.
 
 ## Scope
 
@@ -115,6 +131,9 @@ mechanics like the boundary hierarchy live in `//` comments.
 
 - `./build/scripts/ws-check.sh` and `./build/scripts/ws-test.sh` pass,
   including updated extraction tests.
+- Standalone feature builds pass (CI only runs `--all-features`, which
+  hides gating bugs): `cargo check -p akuna-core --no-default-features
+  --features chunking` and `--features extraction`.
 - `extraction` compiles with no segmentation logic of its own — it calls
   `chunking`.
 - Only the intended types escape the module; no chunk-shaped output is

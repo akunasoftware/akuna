@@ -32,10 +32,13 @@ in `app` on top of core, never in core.
 `env!("CARGO_PKG_NAME")` or a crate-root constant per AGENTS.md's rebrand
 rule) and fix the `setup_tracing` call site to use it. Implement data-dir
 resolution the way the prior implementation in the **akuna-old** project
-does it — consult that repo for the reference (platform data dir derived
-from the app name; ask the owner if you cannot access it) — and root the
-persistent index at `<data_dir>/knowledge`. This replaces the cwd-relative
-constant pattern.
+does it — consult that repo for the reference. If akuna-old is not
+accessible, do NOT block: default to the `directories` crate's
+`ProjectDirs` data dir derived from the app-name constant alone (empty
+qualifier/organization), note the divergence in the PR, and let the owner
+reconcile. Either way this is a new workspace dependency (no dirs-class
+crate exists today). Root the persistent index at `<data_dir>/knowledge`,
+replacing the cwd-relative constant pattern.
 
 **State and startup.** `ApiState { index: Arc<Index> }`. The `Index` is
 built once at server startup (async, loads models, fail-fast with context)
@@ -49,7 +52,9 @@ conventions where they conflict):
   echoing the written records (idempotent upsert, not a 201-create).
 - `GET /records/{collection}/{id}` — `Index::get`; `200` with the full
   `Record` (content included) or `404`.
-- `DELETE /records/{collection}/{id}` — `Index::remove`; `204`.
+- `DELETE /records/{collection}/{id}` — `Index::remove`; `204` always,
+  including for records that don't exist (`remove` is idempotent per step
+  05 — no 404 probing).
 - `GET /records/search` — params: `q` (required, trimmed non-empty else
   `400`), `collections` (comma-separated, absent = all — existing
   convention), `limit` (default from core, bounded app-side like today),
@@ -79,14 +84,20 @@ existed only for the old app path (e.g. utoipa derives on
 `GraphNode`/`GraphEdge` if nothing serializes them anymore, the
 `GraphError → ServiceError` impl).
 
-**Tests.** Rewrite on ephemeral `Index`, keeping the `request()` harness.
-Use slim options for CRUD cases (`reranking_model: None`,
-`fulltext: false` — fast, no reranker download) and default options for
-ONE full-pipeline search case: two linked records, search surfaces both
-(expansion, `limit ≥ 2`) with non-null previews containing the
-query-relevant text. Plus: 404 on missing record, upsert-replaces
-round-trip, collection scoping, filter param, `400`s (empty `q`, bad
-`limit`, malformed `filter`).
+**Tests.** Rewrite on ephemeral `Index`, keeping the `request()` harness
+(construction goes async — `router_with_index(Index::new(..).await)` — so
+the harness setup changes more than the route diff suggests, and
+`server::run` follows). Use slim options for CRUD cases
+(`reranking_model: None`, `fulltext: false` — fast, embedder only) and
+default options for ONE full-pipeline search case: two linked records,
+search surfaces both (expansion, `limit ≥ 2`) with non-null previews
+containing the query-relevant text. Model weight: share one slim `Index`
+across the CRUD tests (build-once seam, mirroring how core module tests
+share model stacks) rather than loading the embedder per test; models
+come from the default HF cache like core's tests. Plus: 404 on missing
+record GET, 204 on missing record DELETE, upsert-replaces round-trip,
+collection scoping, filter param, `400`s (empty `q`, bad `limit`,
+malformed `filter`).
 
 ## Scope
 

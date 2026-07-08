@@ -55,6 +55,14 @@ pub enum MetadataFilter {
 }
 ```
 
+`MetadataFilter` also gets a plain evaluator — `pub fn matches(&self,
+metadata: &Metadata) -> bool` — with exactly the same semantics the engines
+compile to SQL. Step 07 filters graph-expansion results with it; defining
+it beside the type keeps the two interpretations from drifting. Derives on
+all these public types stay minimal (`Clone`, `Debug`, `PartialEq` — plus
+serde on the metadata types when step 05 needs it); this layer never
+crosses FFI.
+
 Rows (two tables). Field lists are REQUIRED — later steps consume them:
 
 ```rust
@@ -79,7 +87,9 @@ pub struct RecordEntry {
 ```
 
 Trait — async methods (LanceDB is async; `Index` is async). Use the
-async-trait pattern that keeps `Box<dyn VectorDbContext>` object-safe:
+`async-trait` crate (add it under the `storage` feature — it is not in the
+workspace yet) to keep `Box<dyn VectorDbContext>` object-safe with `Send`
+futures:
 
 ```rust
 pub trait VectorDbContext: Send + Sync {
@@ -92,6 +102,8 @@ pub trait VectorDbContext: Send + Sync {
     /// Reads one record row.
     async fn get_record(&self, collection: &str, record_id: &str) -> Result<Option<RecordEntry>, VectorError>;
     /// Reads many record rows in one call (result assembly, expansion, previews).
+    /// Keys are (collection, record_id); missing keys are silently skipped;
+    /// found rows return in input-key order.
     async fn get_records(&self, keys: &[(String, String)]) -> Result<Vec<RecordEntry>, VectorError>;
     /// Dense search over chunk embeddings.
     async fn search_chunks(&self, query: &VectorSearchQuery) -> Result<Vec<ChunkSearchResult>, VectorError>;
@@ -124,9 +136,12 @@ Pinned semantics:
   `array_contains` predicates, `All` → SQL `AND`). Requirements: filtering
   stays in-engine, the scheme is documented as a `//` comment, and the
   table schema tolerates step 02 adding FTS indexes without migration.
-- **Embedding dimension is fixed at open** and validated: writes with the
-  wrong dimension error; reopening a persistent store whose stored
-  dimension differs errors at open.
+- **Embedding dimension is fixed at open** and validated: writes AND query
+  embeddings with the wrong dimension error; reopening a persistent store
+  whose stored dimension differs errors at open.
+- **`put_chunks` args are authoritative:** entries whose
+  `collection`/`record_id` fields disagree with the method arguments are a
+  typed error, not silently trusted.
 - ANN index creation may be lazy/best-effort (LanceDB needs a minimum row
   count); flat search below the threshold is fine. Correctness over tuning.
 
@@ -146,11 +161,19 @@ deliberately back `in_memory_context` with a temp directory owned by the
 context and removed on drop — it also keeps the layout identical to
 persistent mode.
 
+Verify before building (cheap spikes, not design work): cosine is
+honored on both flat and ANN paths and `_distance` converts to
+higher-is-better similarity; temp-dir removal on drop works while LanceDB
+holds the dataset (drop contexts before the temp dir — field order).
+
 ## Scope
 
 - Trait, types, errors, LanceDB backend, dense search, in-engine filtering,
-  dimension handling, batch hydration (`get_records`).
+  dimension handling, batch hydration (`get_records`),
+  `MetadataFilter::matches`.
 - Update `storage/mod.rs` module docs and re-exports for the new module.
+- Add `protoc` to the nix devshell (`build/shell-dev.nix`) — lance needs it
+  at build time and it is absent today.
 - Module tests: CRUD round-trip (content survives), filtered search
   (`Equals` and `All`), multi-collection vs scoped search,
   replace-all-chunks (old chunks gone; empty slice clears), idempotent

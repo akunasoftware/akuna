@@ -65,7 +65,9 @@ Rust API is async; the app server is async). The graph trait stays sync
    are pushed into every retrieval call.
 2. **First rerank** — each candidate record's evidence set is its retrieved
    chunk texts PLUS its title when it had a title hit; rerank evidence
-   against the query, roll up to records (max evidence score).
+   against the query, roll up to records (max evidence score). The winning
+   evidence travels with the candidate, kind-tagged, through the rest of
+   the pipeline (expansion and previews branch on it).
 3. **Graph expansion** — traverse relationships from candidate records to
    widen the packet; expanded records are hydrated from the vector layer.
 4. **Final aggregation** — rerank the expanded set on bounded
@@ -115,5 +117,5 @@ Rust API is async; the app server is async). The graph trait stays sync
 | 05-index-core | `Index`/`IndexOptions`, records CRUD, manifest, FFI mirror | 01–04 |
 | 06-search-pipeline | Candidates → fusion → rerank → record results; expansion seam | 05 |
 | 07-graph-expansion | Relationship traversal stage + final aggregation | 06 |
-| 08-preview | Semantically-centered preview builder | 06 |
+| 08-preview | Semantically-centered preview builder | 07 |
 | 09-app-adoption | App config/data dirs; knowledge API rewritten on `Index` | 07 + 08 |

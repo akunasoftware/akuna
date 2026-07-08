@@ -33,9 +33,16 @@ async fn search_chunks_text(&self, query: &TextSearchQuery) -> Result<Vec<ChunkS
 async fn search_titles_text(&self, query: &TextSearchQuery) -> Result<Vec<RecordSearchResult>, VectorError>;
 ```
 
-`TextSearchQuery` carries: query text, collections (empty = all), optional
-`MetadataFilter`, limit (chunk rows for chunk search, records for title
-search). Result types are step 01's, unchanged — one shape per concept;
+```rust
+pub struct TextSearchQuery {
+    pub text: String,
+    pub collections: Vec<String>,      // empty = all
+    pub filter: Option<MetadataFilter>,
+    pub limit: usize,                  // chunk search: chunk rows; title search: records
+}
+```
+
+Result types are step 01's, unchanged — one shape per concept;
 only the scoring source differs. Scores are raw BM25 (do NOT normalize or
 try to make them comparable with cosine similarities — fusion is step 06's
 job and is rank-based).
@@ -75,6 +82,12 @@ Pinned behaviors:
   extra); strict config compatibility is the step 05 manifest's job.
 - Tokenizer/language config: LanceDB defaults, nothing exposed
   ("configure only what genuinely warrants it").
+
+Verify before building: that `full_text_search` composes with the metadata
+predicate as a PRE-filter in the pinned lancedb version (FTS + filter had
+post-filter-only limitations historically — if pre-filtering is impossible
+on this path, escalate to the owner rather than silently post-filtering);
+and which branch applies for index creation on an empty table.
 
 ## Scope
 

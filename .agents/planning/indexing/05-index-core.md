@@ -51,9 +51,11 @@ indexes.
 
 Record shapes (public; FFI mirrors 1:1). These are HTTP/OpenAPI surface in
 step 09, so derive `Serialize`/`Deserialize` + `utoipa::ToSchema` here
-(precedent: `GraphNode`). Pin the wire format of `MetadataValue` to
-externally-tagged lowercase variants (`{"text": "..."}`, `{"integer": 3}`)
-so the JSON contract is stable:
+(precedent: `GraphNode`). Pin the wire format of `MetadataValue` AND
+`MetadataFilter` to externally-tagged lowercase variants —
+`{"text": "..."}`, `{"integer": 3}`;
+`{"equals": {"key": "k", "value": {"text": "v"}}}`,
+`{"all": [...]}` — so the JSON contract step 09 serves is stable:
 
 ```rust
 pub struct Record {
@@ -86,20 +88,34 @@ impl Index {
 Pinned behaviors:
 
 - **Add is upsert.** Updating replaces ALL chunk rows (packer output can
-  differ entirely) AND the record's outgoing edges (delete edges whose
-  source is this record, rewrite from `relationships`); incoming edges
-  from other records are untouched. Collections are created implicitly.
-- **Write path per record:** pack content into chunks (03) → embed chunks
-  + title (`embed_batch`) → vector `put_chunks` + `put_record` → graph
-  `put_node` → edges. Within one `add` batch, write all nodes before any
-  edges so intra-batch references work in any order. An edge targeting a
-  record that exists nowhere → typed error naming the offender (grafeo's
-  `put_edge` contract requires existing nodes; do not invent stub nodes).
-- **Failure mid-write:** vector first, graph second; on graph failure
-  attempt best-effort vector rollback (`delete_record`), return the error
-  either way. Batches are sequential; the error names the failing record;
-  earlier records stay written. Retrying the same `add` fully heals
-  (everything is replace-style). Document and test this.
+  differ entirely) AND the record's outgoing edges (enumerate via
+  `neighbors`, delete edges whose source is this record, rewrite from
+  `relationships`); incoming edges from other records are untouched.
+  Collections are created implicitly. Batch validation runs BEFORE any
+  write: non-empty `relationships` with `graph: false` errors up front, as
+  does a collection named `"Record"` (reserved — it is the node label, and
+  relationship target collections are rebuilt from labels on read).
+- **Write path — two phases, pinned.** Phase 1, per record sequentially:
+  pack content (03) → embed chunks + title (one `embed_batch` per record,
+  document-mode, no query prompt) → vector `put_chunks` + `put_record` →
+  graph `put_node`. On a graph-node failure: best-effort vector rollback
+  (`delete_record`), return the error naming the record; earlier records
+  stay written. Phase 2, after ALL nodes: write edges (intra-batch
+  references work in any order). An edge failure errors naming the record;
+  nothing rolls back in phase 2 — retrying the same `add` fully heals
+  (every write is replace-style). An edge targeting a record that exists
+  nowhere is a typed error naming the offender — rely on the backend's
+  put_edge failing and wrap it with record context (verify grafeo actually
+  errors on missing nodes before leaning on it); do not invent stub nodes.
+- **`remove` semantics:** delete the record's vector rows, its graph node,
+  and ALL edges touching it — outgoing AND incoming (verify whether grafeo
+  `delete_node` cascades edges; if not, enumerate via `neighbors` and
+  `delete_edge` first). Vector first, graph second. Idempotent: removing a
+  missing record is `Ok` (unlike the graph trait's `NotFound` — `Index`
+  absorbs that).
+- **Errors:** `anyhow::Result` per the embedding/reranking convention — no
+  error enum. The manifest-mismatch and edge-target messages must be
+  distinct and stable enough to assert on in tests.
 - **Graph mapping:** node `labels = ["Record", collection]` (record ids are
   only unique per collection — the label carries the collection into node
   identity), `name` = title, payload = record metadata + collection. NO
@@ -107,9 +123,13 @@ Pinned behaviors:
 - **`get`:** record row from the vector layer (authoritative for
   title/content/metadata in every config) + relationships from the graph
   when enabled (outgoing edges via `neighbors`, filtered to
-  `edge.source == this`). With `graph: false`, `relationships` comes back
-  empty — and `add` with non-empty `relationships` errors (don't silently
-  drop caller data).
+  `edge.source == this`; target collection = the target's non-`"Record"`
+  label). With `graph: false`, `relationships` comes back empty — the
+  matching `add` restriction is validated up front (see write path).
+- **Model loading:** `new` loads the embedder and, when configured, the
+  reranker eagerly — fail-fast at construction; the reranker sits unused
+  until step 06. Ephemeral drop order: storage contexts drop before the
+  temp root (struct field order matters).
 - **Metadata round-trip:** `Metadata` is a plain map; absent-vs-empty is
   not distinguished — `get` returns an empty map where nothing was stored.
 - **Manifest** (every root, ephemeral included): `manifest.json` with
@@ -129,16 +149,22 @@ Pinned behaviors:
 FFI (`src-crates/ffi/src/index.rs`, registered in `ffi/src/lib.rs`):
 
 - Mirror `IndexOptions`, `ChunkingOptions`, `Record`, `RecordRelationship`,
-  `MetadataValue`, `MetadataFilter` 1:1 — annotations and conversions
-  only. `Metadata` crosses as `HashMap<String, MetadataValue>` (UniFFI has
-  no BTreeMap; the conversion lives in ffi `From` impls and is fine — type
-  conversion, not behavior). If bindgen rejects the recursive
-  `MetadataFilter`, escalate as a core-surface question — do not reshape
-  it FFI-side.
+  `MetadataValue` 1:1 — annotations and conversions only, including
+  `path`/`cache_dir` as `Option<String>` (the existing embedding FFI
+  omitting `cache_dir` is a known gap; don't copy it). `Metadata` crosses
+  as `HashMap<String, MetadataValue>` (UniFFI has no BTreeMap; the
+  conversion lives in ffi `From` impls and is fine — type conversion, not
+  behavior). `MetadataFilter`'s mirror waits for step 06, where its first
+  FFI consumer (`search`) appears — no dead surface; smoke-test bindgen on
+  the recursive enum then, and escalate as a core-surface question if it
+  chokes rather than reshaping FFI-side.
 - Construction: free async factory `load_index(options: Option<IndexOptions>)`
   under `#[uniffi::export(async_runtime = "tokio")]`, exactly like
   `load_text_embedder`. Methods (`add`, `remove`, `get`) export as async
-  methods on the `uniffi::Object`.
+  methods on the `uniffi::Object` — that `impl` block's
+  `#[uniffi::export]` must ALSO carry `async_runtime = "tokio"` (no
+  in-repo precedent for async object methods; the existing modules are
+  sync-method only).
 - Python parity `src-crates/ffi/tests/python/test_parity_index.py`
   (pytest-asyncio is already configured): add/get/remove round-trip on
   default (ephemeral) options; update-replaces semantics; persistence
