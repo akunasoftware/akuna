@@ -15,40 +15,75 @@ capability).
 
 ## Context
 
-- `storage/vector` from step 01: `VectorDbContext` trait, LanceDB backend,
-  chunk and title tables.
-- LanceDB provides native full-text (BM25) indexes over text columns.
+- `storage/vector` from step 01: `VectorDbContext`, LanceDB backend, chunk
+  and record tables.
+- LanceDB's Rust SDK has native BM25 FTS: `Index::FTS` /
+  `FtsIndexBuilder` for index creation, `QueryBase::full_text_search` for
+  querying. Available since lancedb 0.10, no cargo feature flag needed
+  (verified 2026-07).
 
 ## Design
 
-Extend `VectorDbContext`:
+Extend `VectorDbContext` (async, like the rest):
 
 ```rust
 /// BM25 search over chunk text.
-fn search_chunks_text(&self, query: &TextSearchQuery) -> Result<Vec<ChunkSearchResult>, VectorError>;
+async fn search_chunks_text(&self, query: &TextSearchQuery) -> Result<Vec<ChunkSearchResult>, VectorError>;
 /// BM25 search over record titles.
-fn search_titles_text(&self, query: &TextSearchQuery) -> Result<Vec<TitleSearchResult>, VectorError>;
+async fn search_titles_text(&self, query: &TextSearchQuery) -> Result<Vec<RecordSearchResult>, VectorError>;
 ```
 
 `TextSearchQuery` carries: query text, collections (empty = all), optional
-`MetadataFilter`, limit. Result types are the same as dense search — one
-shape per concept; only the scoring source differs.
+`MetadataFilter`, limit (chunk rows for chunk search, records for title
+search). Result types are step 01's, unchanged — one shape per concept;
+only the scoring source differs. Scores are raw BM25 (do NOT normalize or
+try to make them comparable with cosine similarities — fusion is step 06's
+job and is rank-based).
 
-FTS index creation is controlled at context open (the vector layer takes an
-options input saying which indexes to build), because `IndexOptions` decides
-at init which retrieval functions exist. Opening a persistent context must
-handle both fresh creation and reopening with existing indexes.
+Index configuration at open. Both constructors gain an options parameter —
+an intended in-place signature change to step 01's constructors
+(greenfield, no parallel constructors):
 
-Scores: BM25 scores and cosine distances are not comparable. Do NOT try to
-normalize here — fusion is the search pipeline's job (step 06). Return raw
-engine scores.
+```rust
+#[derive(Clone, Debug, Default)]   // Default = dense-only (step 01 behavior)
+pub struct VectorContextOptions {
+    pub chunk_text_index: bool,    // BM25 over chunk text
+    pub title_text_index: bool,    // BM25 over titles
+}
+pub async fn open_context(path: impl AsRef<Path>, dimensions: usize, options: &VectorContextOptions) -> ...;
+pub async fn in_memory_context(dimensions: usize, options: &VectorContextOptions) -> ...;
+```
+
+Pinned behaviors:
+
+- **Open handles fresh and reopen.** Fresh store with a flag on: create the
+  FTS index on the relevant text column. Reopen: create only what is
+  missing; existing indexes reused. Opening an empty store must not fail —
+  if the pinned lancedb version cannot create an FTS index before data
+  exists, create lazily on first write; the API behavior must be
+  indistinguishable either way.
+- **Writes stay searchable.** LanceDB FTS indexes do not automatically
+  cover rows written after index creation; the backend must keep searches
+  seeing current data (table `optimize()` after writes, or the version's
+  unindexed-tail scan). A test pins it: rows written after open are found.
+- **Gating is context state, not engine probing.** The context records
+  which indexes were enabled; calling an FTS search on a context opened
+  without that index returns a typed `VectorError` variant (one variant +
+  target enum, mirroring `GraphError`'s `GraphTarget` pattern) — never a
+  panic, never silently empty.
+- Flag mismatches on reopen are lenient here (create missing, ignore
+  extra); strict config compatibility is the step 05 manifest's job.
+- Tokenizer/language config: LanceDB defaults, nothing exposed
+  ("configure only what genuinely warrants it").
 
 ## Scope
 
-- Both FTS methods, index creation/reopen handling, index-config input on
-  the open constructors.
-- Tests: lexical matches on chunk text and titles, filtered FTS, behavior
-  when FTS was not enabled at open (typed error, not panic).
+- Both FTS methods, `VectorContextOptions`, constructor change, index
+  create/reopen handling, write-freshness handling.
+- Tests: lexical matches on chunk text and titles; filtered FTS (collection
+  + metadata); multi-collection; typed error when FTS disabled; persistent
+  reopen keeps FTS working; rows written after open are findable;
+  dense-only (default options) contexts still pass all step 01 tests.
 
 ## Out of scope
 
@@ -59,4 +94,5 @@ engine scores.
 
 - `./build/scripts/ws-check.sh` and `./build/scripts/ws-test.sh` pass.
 - Docstrings on all public items.
-- Dense-only contexts from step 01 keep working unchanged.
+- Dense-only behavior is byte-for-byte what step 01 shipped, modulo the
+  constructor signatures.

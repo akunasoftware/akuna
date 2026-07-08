@@ -4,99 +4,98 @@ Read `00-overview.md` first. Requires step 05.
 
 ## Goal
 
-Add `Index::search`: candidate retrieval across all enabled functions,
-fusion, first rerank, and record-level results. Graph expansion enters in
-step 07 (leave a clean seam); preview in step 08 (`preview` stays `None`).
-Mirror in FFI with parity tests.
+Add `Index::search`: candidate retrieval across enabled functions, fusion,
+first rerank, and record-level results. Graph expansion enters in step 07
+(leave a clean seam with a pinned contract); preview in step 08 (`preview`
+stays `None`). Mirror in FFI with parity tests.
 
 ## Context
 
-- `Index` (05) with vector layer dense + FTS search (01–02) and reranker.
-- `TextReranker::rerank_with_options` scores (query, text) pairs.
-- Engines return raw, mutually incomparable scores (cosine vs BM25) —
-  fusion must not assume comparable scales.
+- `Index` (05) with the async vector layer's dense + FTS search (01–02)
+  and hydration (`get_records`), plus the loaded reranker.
+- Reranker API: the pair-scoring call is `TextReranker::score_batch`
+  (scores (query, text) pairs in order — exactly what evidence scoring
+  needs). `rerank_with_options` re-sorts a document list; not the right
+  fit here.
+- Engines return raw, mutually incomparable scores (cosine similarity vs
+  BM25) — fusion is rank-based for exactly that reason.
 
 ## Design
 
-Public shapes:
+Public shapes (serde + `utoipa::ToSchema` like step 05's types — step 09
+serves them over HTTP):
 
 ```rust
-/// Search request.
 pub struct IndexSearchQuery {
-    /// Query text.
-    pub text: String,
-    /// Collections to search. Empty = all collections.
-    pub collections: Vec<String>,
-    /// Optional metadata filter, applied in every engine.
-    pub filter: Option<MetadataFilter>,
-    /// Maximum results. Default: a sensible small number (e.g. 10).
-    pub limit: usize,
+    pub text: String,                   // trimmed-empty => typed error
+    pub collections: Vec<String>,       // empty = all
+    pub filter: Option<MetadataFilter>, // applied in every retrieval call
+    pub limit: usize,                   // Default impl: 10; 0 => Ok(empty)
 }
-
-/// Ranked record-level search hit.
 pub struct IndexSearchResult {
-    /// Record id.
     pub record_id: String,
-    /// Record collection.
     pub collection: String,
-    /// Record title.
     pub title: String,
-    /// Record metadata.
     pub metadata: Metadata,
-    /// Relevance score.
     pub score: f32,
-    /// Semantically relevant excerpt. None until step 08.
-    pub preview: Option<String>,
+    pub preview: Option<String>,        // None until step 08
 }
 ```
 
-`search(query: IndexSearchQuery) -> Result<Vec<IndexSearchResult>>`.
+`pub async fn search(&self, query: IndexSearchQuery) -> Result<Vec<IndexSearchResult>>`.
 
 Pipeline:
 
-1. **Candidates.** Embed the query once. Run, per enabled function:
-   dense chunk search, BM25 chunk search, dense title search, BM25 title
-   search. Each retrieves a generous candidate multiple of `limit`
-   (implementer picks, e.g. 4×) with collection/metadata filters pushed
-   down.
-2. **Fusion.** Fuse the ranked lists with Reciprocal Rank Fusion (rank-based,
-   sidesteps score-scale mismatch; standard constant k=60). Title hits are
-   record-level — fuse them alongside chunk hits by record.
-3. **First rerank.** When reranking is enabled, rerank candidate texts
-   against the query: chunk candidates by chunk text, title-only candidates
-   by title. Roll up to records: a record's score is its best-scoring
-   evidence (max). Without a reranker, fused rank order stands.
-4. **Expansion seam.** A private pipeline stage between roll-up and final
-   ordering that currently passes candidates through unchanged. Step 07
-   fills it. Structure it so adding expansion touches only that stage.
-5. **Results.** Order by score, truncate to `limit`, build
-   `IndexSearchResult` from record info already in storage rows (no graph
-   read needed on the hot path). `preview: None`.
+1. **Candidates.** Embed the query text once. Fan out per enabled
+   function — dense chunk + dense title always; BM25 chunk + BM25 title
+   when `fulltext` — each with collections + filter pushed down and a
+   candidate budget of `4 × limit` floored at 20 (named constants).
+2. **Fusion (RRF, k = 60).** First collapse each chunk-level list to
+   record rank — a record's rank in that list is its best chunk's rank —
+   so long records can't win by chunk count; title lists are already
+   record-level. Then fused(record) = Σ over lists of 1/(k + rank).
+   Carry evidence forward per record: its retrieved chunk texts (deduped
+   by chunk id across lists) and its title when any title list hit.
+3. **First rerank** (when `reranking_model` is set). Evidence set per
+   record = retrieved chunk texts PLUS the title when it had a title hit
+   (a strong title match must survive for chunk-matched records too). One
+   `score_batch` call over all (query, evidence) pairs, `normalize: true`
+   — user-facing scores are sigmoid 0–1. Roll up: record score = max over
+   its evidence scores. Reranker disabled → the RRF fused score is the
+   record score (document: scores are only comparable within one query,
+   and change scale entirely with the reranker toggle).
+4. **Expansion seam.** A private stage between roll-up and final ordering,
+   passthrough in this step; step 07 replaces only its body. PINNED
+   CONTRACT: the stage input/output candidate type carries per record —
+   id, collection, title, metadata, score, and best-evidence text (its
+   top-scoring chunk text, or title for title-only hits). Steps 07 and 08
+   consume that evidence; do not drop it.
+5. **Results.** Order by score descending (`f32::total_cmp`), tie-break on
+   `(collection, record_id)` for deterministic parity tests, truncate to
+   `limit`. Hydrate anything the candidate doesn't already carry with ONE
+   batch `get_records` call — no graph reads in search, ever.
+   `preview: None`.
 
-Design decisions made here (document in code where non-obvious):
-
-- RRF for fusion; roll-up = max evidence score.
-- Chunks stay hidden: nothing chunk-shaped in the result or FFI.
-- Post-expansion final scoring is step 07's decision, not this step's.
-
-FFI: mirror `IndexSearchQuery`/`IndexSearchResult`, add
-`test_parity_index.py` search cases (dense-only config, full config,
-filtered search, multi-collection, title-match retrieval, empty index).
+FFI: mirror `IndexSearchQuery`/`IndexSearchResult`, export `search` as an
+async method; extend `test_parity_index.py`: dense-only config
+(`fulltext: false`), full config, filtered, multi-collection, title-match
+retrieval, empty index, empty query text raises.
 
 ## Scope
 
-- `search` end to end as above, core module tests (including: title-only
-  match surfaces the record; disabled functions contribute nothing; filters
-  respected across engines), FFI mirror + parity.
+- `search` end to end, core module tests (title-only match surfaces the
+  record; title evidence lifts a chunk-matched record; disabled functions
+  contribute nothing; filters respected across engines; rerank-off
+  ordering; limit 0; determinism), FFI mirror + parity.
 
 ## Out of scope
 
-- Graph expansion behavior (07), preview building (08), pagination,
-  highlighting, query operators.
+- Expansion behavior (07), preview building (08), pagination, query
+  operators, highlighting.
 
 ## Acceptance
 
 - `./build/scripts/ws-check.sh`, `ws-test.sh`, and `ws-parity.sh` pass.
-- A default index answers a search in Rust and Python with record-level
+- A default index answers a search from Rust and Python with record-level
   results only.
 - Rerank-disabled and fulltext-disabled configurations search correctly.
