@@ -57,6 +57,13 @@ same `MetadataFilter` semantics.)
 Rust API is async; the app server is async). The graph trait stays sync
 (Grafeo is sync).
 
+**No-locking rule (binding, all steps):** implement NO locking handling
+anywhere — no lockfiles in the data dir or storage roots, no file locks,
+no single-instance guards, no `Index`-level write mutexes or
+serialization. The storage engines' own native concurrency behavior
+stands as-is. If any locking shows up while building, remove it. The
+owner will design concurrency handling holistically later.
+
 ## Search pipeline
 
 1. **Candidates** — dense chunk search + dense title search (always) and

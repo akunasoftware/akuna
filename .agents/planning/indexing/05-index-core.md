@@ -77,8 +77,12 @@ pub struct RecordRelationship {
 }
 ```
 
-`Index` — `Send + Sync`, methods take `&self` (internal write
-serialization; app state will hold `Arc<Index>`), all async:
+`Index` — `Send + Sync`, methods take `&self` (app state will hold
+`Arc<Index>`), all async. NO locking of any kind (see the overview's
+binding rule): no internal write mutex, no lockfiles — concurrent calls
+pass straight through to the engines, whose native behavior stands.
+"Sequential" below means the order of work WITHIN one `add` call, not
+cross-call synchronization:
 
 ```rust
 impl Index {
