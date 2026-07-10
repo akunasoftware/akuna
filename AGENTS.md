@@ -8,7 +8,9 @@
 
 - Greenfield. No legacy/regression padding. Refactor and break when useful.
 - Repo-wide hard constraints live in project files.
-- Architecture principles live in `.agents/principles.md`; binding.
+- Architecture principles live in `.agents/PRINCIPLES.md`; binding.
+- System structure lives in `.agents/ARCHITECTURE.md`.
+- Code conventions live in `.agents/CODESTYLE.md`.
 - Never hardcode app name in code/docs. Read from constants or toml for rebrand safety.
 
 # API Style

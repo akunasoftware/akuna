@@ -2,7 +2,7 @@
 
 Read this file before implementing any numbered step. It holds the contracts
 every step must honor. Each numbered file is one PR-sized step, implemented in
-order. `AGENTS.md` and `.agents/principles.md` are binding on all steps.
+order. `AGENTS.md` and `.agents/PRINCIPLES.md` are binding on all steps.
 
 ## Vision
 
@@ -103,7 +103,7 @@ owner will design concurrency handling holistically later.
 - API style per `AGENTS.md`: actor nouns, `<Actor>Options`, `_bytes`/`_file`
   in Rust and `_path` in Python FFI, flat options.
 - Docstrings state purpose, never mechanics; rationale lives in `//` code
-  comments (`.agents/principles.md`). The type sketches in these step files
+  comments (`.agents/PRINCIPLES.md`). The type sketches in these step files
   annotate semantics for the implementer — do not copy sketch comments into
   `///` docs verbatim.
 - The FFI mirror covers `Index`'s public consumer surface 1:1 (types,
