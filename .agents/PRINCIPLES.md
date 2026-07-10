@@ -2,10 +2,6 @@
 
 Hard rules. Binding on all work. Add sparingly, with owner sign-off.
 
-The product: the whole knowledge-tooling toolset in one embedded package —
-sophisticated functionality behind the simplest possible API surface,
-distributable anywhere, usable from any language.
-
 - **No external runtimes.** Everything runs inside our own embedded stack —
   inference, storage, all of it. Exactly one embedded ML backend. Model
   weights in interchange formats are fine; external runtimes are not.

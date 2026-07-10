@@ -34,7 +34,7 @@ Code conventions. Deviations need owner sign-off.
 - Internals private by default; narrow visibility only where truly
   imported. Vendored, model, and generated modules stay private.
 - Every capability is a feature flag, aggregated in `full`. Verify
-  standalone feature builds yourself — CI covers only the full set.
+  standalone feature builds yourself.
 
 ## Imports
 

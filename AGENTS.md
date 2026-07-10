@@ -13,8 +13,7 @@
 
 - `.agents/PRINCIPLES.md` — binding hard rules.
 - `.agents/CODESTYLE.md` — code conventions.
-- `.agents/ARCHITECTURE.md` — map of what exists.
-- `.agents/planning/` — implementation specs. `.agents/commands/` — procedures.
+- `.agents/ARCHITECTURE.md` — the demanded system shape.
 
 # Workspace
 
