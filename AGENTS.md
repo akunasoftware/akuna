@@ -1,38 +1,31 @@
 # Communication
 
-- Think like caveman. Talk like caveman. Don't waste token. (use caveman skill)
+- Think like caveman. Talk like caveman. Don't waste token.
 - If user input is posed as question, do not assume to implement.
-- Focus on absolute simplicity / YAGNI. Don't make decisions or implementations before needed. Avoid technical debt.
+- Absolute simplicity / YAGNI. No decisions or implementations before needed.
 
 # Project
 
 - Greenfield. No legacy/regression padding. Refactor and break when useful.
-- Repo-wide hard constraints live in project files.
-- Architecture principles live in `.agents/PRINCIPLES.md`; binding.
-- System structure lives in `.agents/ARCHITECTURE.md`.
-- Code conventions live in `.agents/CODESTYLE.md`.
-- Never hardcode app name in code/docs. Read from constants or toml for rebrand safety.
+- Where existing code deviates from these docs, the docs win — align on next
+  touch.
+- Never hardcode the app name in runtime or display strings; read it from a
+  constant or toml. Package/crate identifiers and registry names are exempt.
 
-# API Style
+# Docs
 
-- Actor types are agent nouns saying what they do, e.g. `TextEmbedder`, `TextReranker`, `LayoutDetector`, `OcrEngine`, `FileTypeDetector`.
-- Options structs are `<Actor>Options`.
-- Model enums stay domain-named, e.g. `EmbeddingModel`, `OcrDetectionModel`.
-- Byte/path method pairs are `<verb>_bytes` and `<verb>_file` in Rust; Python FFI uses `<verb>_path` for path variants.
-- Pipeline configuration is a flat plain-field options struct with defaults, not a builder.
+- `.agents/PRINCIPLES.md` — binding hard rules. Read before designing.
+- `.agents/CODESTYLE.md` — code conventions. Read before writing code.
+- `.agents/ARCHITECTURE.md` — map of what exists.
+- `.agents/planning/` — implementation specs. `.agents/commands/` — procedures.
 
 # Workspace
 
-- Monorepo uses nix.
-- Current shell is devshell.
-- Shell source: `build/shell-dev.nix`.
-- Use workspace scripts for checking/building:
-  - ./build/scripts/ws-all.sh # for all below scripts run in sequence
-    - ./build/scripts/ws-check.sh # faster, only check for problems
-    - ./build/scripts/ws-fix.sh # fast, auto-fix where possible with linters
-    - ./build/scripts/ws-test.sh # slow and exhaustive, runs all tests
-
-# Documentation
-
-- Keep docstrings consistent in nature, be concise and descriptive of purpose/intent
-- Ensure docstrings exist on all functions in file root, compiler cannot force but still need
+- Nix monorepo: work inside the devshell (`nix develop`; source
+  `build/shell-dev.nix`).
+- Done = `./build/scripts/ws-check.sh` + `ws-test.sh` pass; FFI changes also
+  `ws-parity.sh` (CI runs all three). `ws-fix.sh` auto-fixes; `ws-all.sh`
+  runs everything.
+- Do not run `bacon` — the watcher hangs the CLI. Never `lsp-ignore` without
+  explicit consent.
+- Fix all errors before stopping, unless feedback is needed.
