@@ -1,30 +1,28 @@
 # Architecture
 
-The demanded shape of the system. Code aligns to this.
+Demanded shape. Code aligns to this.
 
 ## Purpose
 
-The whole knowledge-tooling toolset in one embedded package — sophisticated
-functionality behind the simplest possible API surface, distributable
-anywhere, usable from any language.
+The whole knowledge-tooling toolset in one embedded package: sophisticated
+functionality, simplest possible API, distributable anywhere, usable from
+any language.
 
-## The split
+## Split
 
-- `src-crates/core` — the library. Every capability lives here, embedded;
-  all intelligence belongs to the library and nothing else.
-- `src-crates/app` — the product. CLI + HTTP API built on the library;
-  product concerns never enter the library.
-- `src-crates/ffi` — the bindings. A dumb mirror of the library, proven by
-  parity test suites in every bound language.
-- `build/` — packaging, the devshell, and the `ws-*` scripts that gate all
-  work.
+- `src-crates/core` — the library. All capabilities, all intelligence.
+- `src-crates/app` — the product. CLI + HTTP API on the library; product
+  concerns never enter the library.
+- `src-crates/ffi` — the bindings. Dumb mirror, proven by parity suites
+  per bound language.
+- `build/` — packaging, devshell, `ws-*` gate scripts.
 
-## Structure demands
+## Structure
 
-- Each capability is an independently feature-flagged library module,
-  aggregated in `full`; the product and bindings consume `full`.
-- Every capability carries its own module tests; the bindings surface is
-  proven by parity suites, not unit tests.
-- Model capabilities embed their weights or fetch them into a configurable
-  cache; nothing else is fetched at runtime.
-- Storage is library-internal — never exposed through the bindings.
+- Capability = independently feature-flagged library module; `full`
+  aggregates; product and bindings consume `full`.
+- Every capability has module tests; the bindings surface is proven by
+  parity suites, not unit tests.
+- Model weights are embedded or fetched into a configurable cache; nothing
+  else is fetched at runtime.
+- Storage is library-internal — never bound.

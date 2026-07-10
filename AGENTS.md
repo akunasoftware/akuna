@@ -1,24 +1,23 @@
 # Communication
 
-- Think like caveman. Talk like caveman. Don't waste token.
-- If user input is posed as question, do not assume to implement.
-- Absolute simplicity / YAGNI. No decisions or implementations before needed.
+- Think caveman. Talk caveman. Don't waste token.
+- Question ≠ implement request.
+- YAGNI. Nothing before needed.
 
 # Project
 
-- Greenfield. No legacy/regression padding. Refactor and break when useful.
+- Greenfield. No legacy padding. Break freely.
 
 # Docs
 
-- `.agents/PRINCIPLES.md` — binding hard rules.
+- `.agents/PRINCIPLES.md` — hard rules.
 - `.agents/CODESTYLE.md` — code conventions.
-- `.agents/ARCHITECTURE.md` — the demanded system shape.
+- `.agents/ARCHITECTURE.md` — demanded shape.
 
 # Workspace
 
-- Work inside the devshell: `nix develop` (defined under `build/`).
-- Done = `./build/scripts/ws-check.sh` + `ws-test.sh` pass; FFI changes also
-  `ws-parity.sh`. `ws-fix.sh` auto-fixes; `ws-all.sh` runs everything.
-- No watch-mode tools — watchers hang the CLI. Never
-  `lsp-ignore` without explicit consent.
-- Fix all errors before stopping, unless feedback is needed.
+- Devshell: `nix develop`.
+- Done = `./build/scripts/ws-check.sh` + `ws-test.sh`; FFI also
+  `ws-parity.sh`. `ws-fix.sh` auto-fixes; `ws-all.sh` = everything.
+- No watch-mode tools — they hang the CLI. No `lsp-ignore` without consent.
+- Fix all errors before stopping.
