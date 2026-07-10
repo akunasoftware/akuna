@@ -4,7 +4,8 @@ Conventions. Deviations need owner sign-off.
 
 ## Naming
 
-- Actors = agent nouns: `TextEmbedder`, `FileTypeDetector`.
+- Actors = agent nouns naming the doer (an embedder of text, a detector of
+  file types); never manager/util/service nouns.
 - Options = `<Actor>Options`. Model enums domain-named.
 - Pairs, where file input exists: `<verb>_bytes` + `<verb>_file` in core;
   `<verb>_path` in FFI.
@@ -27,9 +28,10 @@ Conventions. Deviations need owner sign-off.
   in `models/`, storage engines in `backend/`; tests =
   `#[cfg(test)] mod tests;` + sibling `tests.rs`.
 - Module doc: one-line `//!` + runnable doctest.
-- Private by default. Vendored/model/generated modules stay private.
-- Capability = feature flag, aggregated in `full`. Verify standalone
-  feature builds.
+- Private by default; visibility scoped to the capability, package-wide
+  only when genuinely shared. Vendored/model/generated modules stay
+  private.
+- Verify standalone feature builds.
 
 ## Imports
 
@@ -44,16 +46,16 @@ Conventions. Deviations need owner sign-off.
 
 ## FFI
 
-- Per-module string-only error enum + converter. Free async factory taking
-  optional options, defaulting to core's. Inference that can overflow
-  default thread stacks (measure when unsure) goes via the shared
-  big-stack wrapper; light calls core directly.
+- Per-module string-only error enum + converter. Free async factory
+  `load_<actor>` taking optional options, defaulting to core's.
+  Stack-heavy inference (measure when unsure) via the shared big-stack
+  wrapper.
 
 ## Tests
 
 - Names short, implicit from module path, consistent wording.
-- Fixtures via the shared testkit from the hosted corpus; model-heavy
-  tests use its big-stack runner.
+- Fixtures via the shared testkit from the hosted corpus, cached after
+  first fetch; model-heavy tests use its big-stack runner.
 
 ## Dependencies
 
@@ -62,8 +64,8 @@ Conventions. Deviations need owner sign-off.
 
 ## Docs
 
-- Docstrings on all public items — purpose per `PRINCIPLES.md`. Lints and
-  check scripts enforce the rest.
+- Docstrings on all public items: purpose, not mechanics; internals may
+  say how. Rationale in code comments, not docs.
 
 ## Determinism
 

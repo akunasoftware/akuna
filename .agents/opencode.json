@@ -3,6 +3,7 @@
   "instructions": [
     "AGENTS.md",
     ".agents/PRINCIPLES.md",
-    ".agents/CODESTYLE.md"
+    ".agents/CODESTYLE.md",
+    ".agents/ARCHITECTURE.md"
   ]
 }

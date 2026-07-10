@@ -6,7 +6,7 @@
 
 # Project
 
-- Greenfield. No legacy padding. Break freely.
+- No legacy padding. Break freely.
 
 # Docs
 
@@ -20,5 +20,6 @@
 - Devshell: `nix develop`.
 - Done = `./build/scripts/ws-check.sh` + `ws-test.sh`; FFI also
   `ws-parity.sh`. `ws-fix.sh` auto-fixes; `ws-all.sh` = everything.
-- No watch-mode tools — they hang the CLI. No `lsp-ignore` without consent.
+- No watch-mode tools — they hang the CLI. No diagnostic-suppression
+  directives without consent.
 - Fix all errors before stopping.
