@@ -3,14 +3,12 @@
 Review prompt docs:
 
 - `AGENTS.md`
-- `opencode.json`
+- `.agents/PRINCIPLES.md`, `.agents/CODESTYLE.md`, `.agents/ARCHITECTURE.md`
+- `.agents/opencode.json`
 - `.agents/commands/**/*.md`
-- `.agents/skills/**/*.md` if present
-- `.agents/brain/**/*.md` if present
 
 ## Process
 
-- Apply communication + docs guidance from loaded brain.
 - Use 2+ blind read-only subagent reviewers.
   - Give realistic task only; do not mention expected guide path.
   - Run reviewers independently; do not share prior findings or expected failures.
@@ -23,22 +21,14 @@ Review prompt docs:
 ## Rules
 
 - Markdown good for humans + agents.
-  - Keep related commentary indented.
-- Keep `AGENTS.md` lean.
-  - Root = project constraints + command/brain index only.
-  - Main brain items must be listed literally in `AGENTS.md` for human discovery.
-  - Main brain items must be autoloaded through `opencode.json` `instructions`.
-  - Do not rely on `AGENTS.md` `@file` refs; OpenCode docs say AGENTS does not auto-parse them.
-- Avoid duplication.
-  - Subprompts must not repeat top-prompt rules unless needed for isolation.
-- Keep docs human-readable.
-- Forbid literal code/source file refs inside markdown prompts/brain.
-  - Code paths move; stale refs mislead agents.
-  - Prefer discovery instructions, e.g. “find current examples”.
-  - Brain refs are OK.
-  - Keep core brain index in `AGENTS.md` and `opencode.json` `instructions`.
-- If prompt grows large, distill into new prompt or namespace.
-- Move durable project/domain intent to `.agents/brain/`.
-  - Use one topic per file.
-  - Name by domain noun: `billing.md`, `branding.md`, `deployment.md`.
-  - Keep structure clean and growing.
+- Keep `AGENTS.md` lean: entry point + doc index only.
+  - Doc files must be listed literally in `AGENTS.md` for discovery.
+  - Rule files must be autoloaded through `opencode.json` `instructions`.
+  - Do not rely on `AGENTS.md` `@file` refs; they do not auto-parse.
+- One owner per rule; subprompts must not repeat top-prompt rules.
+- Forbid technology brands and literal code/source refs inside prompt docs.
+  - Code paths move and stacks change; stale refs mislead agents.
+  - Prefer roles and discovery, e.g. "the embedded graph engine", "find
+    current examples". Verbatim commands and doc addresses are exempt.
+- If a prompt grows large, distill into a new prompt or namespace.
+- Durable domain intent goes to the owning doc file, one topic per place.

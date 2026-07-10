@@ -100,8 +100,8 @@ owner will design concurrency handling holistically later.
 
 ## Conventions
 
-- API style per `AGENTS.md`: actor nouns, `<Actor>Options`, `_bytes`/`_file`
-  in Rust and `_path` in Python FFI, flat options.
+- API style per `.agents/CODESTYLE.md`: actor nouns, `<Actor>Options`,
+  `_bytes`/`_file` in core and `_path` in Python FFI, flat options.
 - Docstrings state purpose, never mechanics; rationale lives in `//` code
   comments (`.agents/PRINCIPLES.md`). The type sketches in these step files
   annotate semantics for the implementer — do not copy sketch comments into
