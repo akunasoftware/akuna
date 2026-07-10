@@ -35,6 +35,9 @@ Three crates, three roles:
 - Every capability is configurable through a flat options struct with
   sensible defaults — default construction always works.
 - Configure only what genuinely warrants it; configurability is complexity.
+- **No premature optimization** — Knuth: "premature optimization is the
+  root of all evil." Correct and simple first; optimize only what
+  measurement proves hot, when it actually matters.
 - One naming and defaulting convention everywhere (AGENTS.md API Style).
 - No builder patterns; static options structs are sufficient.
 
