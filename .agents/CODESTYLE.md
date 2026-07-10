@@ -17,8 +17,7 @@ Conventions. Deviations need owner sign-off.
 ## Errors
 
 - One typed error enum per capability in a dedicated module, exported from
-  the feature root, context + source kept. Convert engine errors at the
-  boundary; never leak them.
+  the feature root, context + source kept.
 - Missing reads → `Option`. No `unwrap`; `expect` only for provable
   invariants, reason in message.
 

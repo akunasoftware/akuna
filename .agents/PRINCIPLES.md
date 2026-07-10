@@ -20,3 +20,20 @@ Hard rules. Owner sign-off to change.
   root of all evil." Optimize only what measurement proves hot.
 - **Purpose, never mechanics.** Public docstrings say what for; internals
   may say how. Rationale in code comments, not docs.
+- **Parity-proven ports.** Ported or mirrored functionality is proven
+  equivalent — committed goldens, measured tolerance floors — never
+  eyeballed.
+- **One helper per invariant.** Subtle or risky operations live in one
+  shared helper; call it, never reimplement.
+- **Convert at boundaries.** Foreign types, errors, and values never cross
+  a boundary raw; one conversion site per boundary.
+- **Config reaches every site.** Every caller-set option is honored
+  everywhere it applies; no silent defaults mid-stack.
+- **Seams built in.** Every unit takes its dependencies injectable; tests
+  are hermetic and deterministic.
+- **Record engine work.** Every engine invocation leaves one metered audit
+  record.
+- **Capability boundaries compiler-enforced.** Visibility scoped to the
+  capability; crate-wide only when genuinely shared.
+- **One blueprint per module kind.** Modules of a kind share one shape;
+  new ones copy it.
