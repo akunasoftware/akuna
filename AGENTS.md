@@ -10,6 +10,7 @@
 
 # Docs
 
+- Docs are authoritative.
 - `.agents/PRINCIPLES.md` — hard rules.
 - `.agents/CODESTYLE.md` — code conventions.
 - `.agents/ARCHITECTURE.md` — demanded shape.

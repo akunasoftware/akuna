@@ -6,7 +6,8 @@ Conventions. Deviations need owner sign-off.
 
 - Actors = agent nouns: `TextEmbedder`, `FileTypeDetector`.
 - Options = `<Actor>Options`. Model enums domain-named.
-- Pairs: `<verb>_bytes` + `<verb>_file` in core; `<verb>_path` in FFI.
+- Pairs, where file input exists: `<verb>_bytes` + `<verb>_file` in core;
+  `<verb>_path` in FFI.
 
 ## Options
 
@@ -45,8 +46,9 @@ Conventions. Deviations need owner sign-off.
 ## FFI
 
 - Per-module string-only error enum + converter. Free async factory taking
-  optional options, defaulting to core's. Stack-heavy inference via the
-  shared big-stack wrapper; light calls core directly.
+  optional options, defaulting to core's. Inference that can overflow
+  default thread stacks (measure when unsure) goes via the shared
+  big-stack wrapper; light calls core directly.
 
 ## Tests
 
