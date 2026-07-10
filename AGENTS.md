@@ -7,7 +7,6 @@
 # Project
 
 - Greenfield. No legacy/regression padding. Refactor and break when useful.
-- Where code deviates from these docs, the docs win — align on next touch.
 
 # Docs
 
