@@ -24,14 +24,14 @@ grammars), ocr → layout, ML capabilities → the private ML plumbing module.
 - `embedding` — dense text embeddings.
 - `reranking` — cross-encoder pair scoring.
 - `layout` — document layout blocks.
-- `ocr` — image OCR (composes layout).
+- `ocr` — image OCR.
 - `extraction` — file/bytes → text + structured parts (code parsing plus
   PDF/office/EPUB/OCR extractors); free functions + an options struct.
 - `storage` — graph storage: a context trait over an embedded graph
   engine, on-disk and in-memory constructors. Core-only; not exposed over
   FFI.
 - `ml` (private) — ML plumbing; device selection via our own GPU probe
-  over the framework's dispatch layer; GPU and CPU backends only.
+  over the framework's dispatch layer; GPU and CPU execution only.
 
 Checkpoints for the four model capabilities download from the model host
 into a configurable cache at first use; detection is fully embedded.

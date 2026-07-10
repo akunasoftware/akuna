@@ -21,6 +21,6 @@
 - Work inside the devshell: `nix develop` (defined under `build/`).
 - Done = `./build/scripts/ws-check.sh` + `ws-test.sh` pass; FFI changes also
   `ws-parity.sh`. `ws-fix.sh` auto-fixes; `ws-all.sh` runs everything.
-- No watch-mode tools (`bacon` etc.) — watchers hang the CLI. Never
+- No watch-mode tools — watchers hang the CLI. Never
   `lsp-ignore` without explicit consent.
 - Fix all errors before stopping, unless feedback is needed.

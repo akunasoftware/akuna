@@ -33,7 +33,7 @@ Code conventions. Deviations need owner sign-off.
 - Module doc: one-sentence `//!` summary + a runnable example doctest.
 - Internals private by default; narrow visibility only where truly
   imported. Vendored, model, and generated modules stay private.
-- Every capability is a cargo feature, aggregated in `full`. Verify
+- Every capability is a feature flag, aggregated in `full`. Verify
   standalone feature builds yourself — CI covers only the full set.
 
 ## Imports
