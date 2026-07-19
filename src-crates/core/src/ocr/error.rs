@@ -23,13 +23,13 @@ pub enum OcrError {
     #[error("OCR model load failed")]
     Load {
         /// Underlying loader error.
-        source: anyhow::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// OCR preprocessing or inference failed.
     #[error("OCR inference failed")]
     Inference {
         /// Underlying OCR error.
-        source: anyhow::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 }

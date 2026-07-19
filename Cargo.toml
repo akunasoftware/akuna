@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "src-crates/app",
   "src-crates/core",
+  "src-crates/ffi",
 ]
 
 [workspace.package]
@@ -14,15 +15,18 @@ license = "MIT"
 rust-version = "1.96.0"
 
 [workspace.dependencies]
+# Workspace packages use one path declaration.
+akuna-core = { path = "src-crates/core" }
+
 # core foundational deps
 anyhow = "1.0.102"
 thiserror = "2.0.18"
+# App, core, and bindings need Tokio's runtime, macros, filesystem, and sync APIs.
 tokio = { version = "1.52.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-schemars = "1.1.0"
 utoipa = "5.5.0"
 
 # ML infra
@@ -30,23 +34,11 @@ tokenizers = "0.22.2"
 onnx-ir = "0.21.0-pre.3"
 protobuf = "3.7.2"
 safetensors = "0.7.0"
-burn = { version = "0.21.0" }
-# Single runtime-dispatched backend: one non-generic `Dispatch` type whose
-# *device* selects wgpu (GPU) or ndarray (CPU) at runtime. `webgpu` gives the
-# cross-platform wgpu backend (Metal/Vulkan/DX12); `ndarray` is the pure-Rust
-# CPU fallback. Only these two backends are compiled (no CUDA/MLIR/tch chains).
-burn-dispatch = { version = "0.21.0", default-features = false, features = ["webgpu", "ndarray", "std"] }
-# burn-wgpu / burn-ndarray are pulled in by burn-dispatch; kept as direct deps
-# only to name the concrete `WgpuDevice` / `NdArrayDevice` device types.
-burn-wgpu = { version = "0.21.0", default-features = false, features = ["std", "webgpu"] }
-# Default features bring `simd` + `multi-threads` (both pure-Rust) so the CPU
-# fallback backend is not pathologically slow.
-burn-ndarray = { version = "0.21.0" }
-burn-store = { version = "0.21.0-pre.3", features = ["std", "safetensors"] }
+burn = { version = "0.21.0", default-features = false, features = ["std"] }
+burn-dispatch = { version = "0.21.0", default-features = false, features = ["webgpu", "flex", "std"] }
+burn-store = { version = "0.21.0", default-features = false, features = ["std", "safetensors", "pytorch"] }
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "ureq", "rustls-tls"] }
 image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "webp"] }
-# Runtime GPU-adapter probe for auto backend selection (wgpu version must match
-# the one cubecl-wgpu pulls so the dependency graph stays unified).
 wgpu = "29"
 pollster = "0.4"
 

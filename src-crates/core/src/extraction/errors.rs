@@ -57,11 +57,16 @@ impl From<std::io::Error> for FileExtractionError {
     }
 }
 
-impl From<crate::detection::MagikaInferenceError> for FileExtractionError {
-    fn from(source: crate::detection::MagikaInferenceError) -> Self {
-        Self::DetectionEngine {
-            engine: "magika",
-            source: Box::new(source),
+impl From<crate::detection::DetectionError> for FileExtractionError {
+    fn from(source: crate::detection::DetectionError) -> Self {
+        match source {
+            crate::detection::DetectionError::Io { source } => {
+                Self::Io { source }
+            }
+            source => Self::DetectionEngine {
+                engine: "magika",
+                source: Box::new(source),
+            },
         }
     }
 }

@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::Serialize;
+
+use crate::detection::DetectionOrigin;
 
 /// Top-level extraction configuration.
 pub struct ExtractionConfig {
@@ -12,7 +14,7 @@ pub struct ExtractionConfig {
     pub return_parts: bool,
     /// OCR configuration for image extraction.
     #[cfg(feature = "ocr")]
-    pub ocr: crate::ocr::OcrOptions,
+    pub ocr: crate::ocr::OcrEngineOptions,
 }
 
 impl Default for ExtractionConfig {
@@ -22,7 +24,7 @@ impl Default for ExtractionConfig {
             return_content: false,
             return_parts: false,
             #[cfg(feature = "ocr")]
-            ocr: crate::ocr::OcrOptions::default(),
+            ocr: crate::ocr::OcrEngineOptions::default(),
         }
     }
 }
@@ -42,6 +44,40 @@ pub struct ExtractionResult {
     /// Structured content parts derived from extraction, when content was read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parts: Option<Vec<ExtractionPart>>,
+}
+
+/// Closed set of extraction pipeline step roles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionPipelineStepKind {
+    /// File type detection.
+    Detection,
+    /// Structured or plain content parsing.
+    Parsing,
+    /// Text recognition from image regions.
+    Recognition,
+}
+
+/// Semantic kind for extracted content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartKind {
+    /// Caption or source attribution.
+    Caption,
+    /// Page footer content.
+    Footer,
+    /// Heading or title content.
+    Heading,
+    /// List item content.
+    ListItem,
+    /// Paragraph text.
+    Paragraph,
+    /// Table content.
+    Table,
+    /// Plain text content.
+    Text,
+    /// Unclassified content.
+    Unknown,
 }
 
 /// Structured content part derived from a source document.
@@ -71,49 +107,27 @@ pub struct ExtractionProvenance {
     /// Bounding box in source coordinate space, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<ExtractionBbox>,
-    /// Byte range in the source text, when available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub byte_range: Option<ExtractionByteRange>,
-}
-
-/// Shared semantic kind for extracted parts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PartKind {
-    /// Caption or source attribution.
-    Caption,
-    /// Source code or code-like content.
-    Code,
-    /// Page footer content.
-    Footer,
-    /// Heading or title content.
-    Heading,
-    /// List item content.
-    ListItem,
-    /// Markup content not otherwise classified.
-    Markup,
-    /// Paragraph text.
-    Paragraph,
-    /// Table content.
-    Table,
-    /// Plain text content.
-    Text,
-    /// Unclassified content.
-    Unknown,
 }
 
 /// One step in the extraction pipeline that processed a document.
 #[derive(Clone, Debug, Serialize)]
 pub struct ExtractionPipelineStep {
-    /// Step role (e.g. `detection`, `recognition`, `parsing`).
-    pub step: String,
+    /// Step role.
+    pub step: ExtractionPipelineStepKind,
     /// Engine that performed this step (e.g. model identifier, library name).
     pub engine: String,
     /// Wall-clock duration of this step in milliseconds.
     pub duration_ms: u64,
-    /// Throughput metrics (counts, etc).
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub outputs: HashMap<String, usize>,
+    /// Throughput metrics.
+    ///
+    /// Known keys:
+    ///
+    /// - `pages`: pages parsed.
+    /// - `parts`: structured parts emitted.
+    /// - `texts`: recognized text blocks.
+    /// - `types`: file types detected.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub outputs: BTreeMap<String, u64>,
 }
 
 /// Bounding box in source coordinates.
@@ -127,15 +141,6 @@ pub struct ExtractionBbox {
     pub width: f32,
     /// Box height.
     pub height: f32,
-}
-
-/// Byte range in source content.
-#[derive(Clone, Debug, Serialize)]
-pub struct ExtractionByteRange {
-    /// Inclusive start byte offset.
-    pub start: usize,
-    /// Exclusive end byte offset.
-    pub end: usize,
 }
 
 /// Metadata detected during extraction.
@@ -155,6 +160,10 @@ pub struct ExtractionMetadata {
     pub description: String,
     /// Whether the file can be treated as text.
     pub is_text: bool,
+    /// Detection confidence from 0 to 1.
+    pub confidence: f32,
+    /// Whether a rule or model resolved the file type.
+    pub origin: DetectionOrigin,
     /// Blake3 hash of raw file bytes.
     pub hash: String,
 }
@@ -177,15 +186,6 @@ pub(in crate::extraction) struct DocumentContent {
 impl DocumentContent {
     /// Build a plain text document part from extractor text.
     pub(in crate::extraction) fn from_text(text: String) -> Self {
-        let parts = crate::extraction::parts::from_text(&text);
-        if parts.len() > 1 {
-            return Self {
-                canonical_text: Some(text),
-                parts,
-                pipeline: Vec::new(),
-            };
-        }
-
         Self {
             canonical_text: None,
             parts: vec![ExtractionPart {

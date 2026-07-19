@@ -1,42 +1,13 @@
-use std::path::Path;
+use anyhow::{Result, bail};
 
-use anyhow::{Context, Result, bail};
-use hf_hub::{Repo, RepoType, api::tokio::ApiBuilder};
+use crate::ocr::{
+    OcrRecognitionModel, models::pp_ocr::spec::recognizer_dictionary,
+};
 
-use crate::ocr::models::pp_ocr::spec::PpOcrRecognizerConfig;
-
-const INFERENCE_CONFIG_FILE: &str = "inference.yml";
-
-pub(crate) async fn load_dictionary(
-    config: &PpOcrRecognizerConfig,
-    cache_dir: Option<&Path>,
+pub(crate) fn load_dictionary(
+    model: OcrRecognitionModel,
 ) -> Result<Vec<String>> {
-    let mut builder = ApiBuilder::new().with_progress(true);
-    if let Some(cache_dir) = cache_dir {
-        builder = builder.with_cache_dir(cache_dir.to_path_buf());
-    }
-
-    let api = builder.build().context(
-        "failed to initialize Hugging Face API for PaddleOCR dictionary",
-    )?;
-    let repo = api.repo(Repo::with_revision(
-        config.spec.repo_id.to_string(),
-        RepoType::Model,
-        config.spec.revision.to_string(),
-    ));
-
-    let inference_config_path = repo.get(INFERENCE_CONFIG_FILE).await.with_context(|| {
-        format!(
-            "failed to fetch PaddleOCR recognizer {INFERENCE_CONFIG_FILE} from {}",
-            config.spec.repo_id
-        )
-    })?;
-    let inference_config = std::fs::read_to_string(&inference_config_path)
-        .with_context(|| {
-            format!("failed to read {}", inference_config_path.display())
-        })?;
-
-    let mut dictionary = parse_character_dict(&inference_config)?;
+    let mut dictionary = parse_character_dict(recognizer_dictionary(model))?;
     dictionary.push(" ".to_string());
 
     Ok(dictionary)

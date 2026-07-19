@@ -132,7 +132,7 @@ impl<B: Backend<FloatElem = f32>> SvtrBlock<B> {
 
 /// Native PP-OCRv6 recognizer.
 #[derive(Debug)]
-pub(crate) struct PpOcrRecognizer<B: Backend> {
+pub(crate) struct PpOcrTextRecognizer<B: Backend> {
     stem1: ConvLayer<B>,
     stem2a: ConvLayer<B>,
     stem2b: ConvLayer<B>,
@@ -150,7 +150,7 @@ pub(crate) struct PpOcrRecognizer<B: Backend> {
     dim: usize,
 }
 
-impl<B: Backend<FloatElem = f32>> PpOcrRecognizer<B> {
+impl<B: Backend<FloatElem = f32>> PpOcrTextRecognizer<B> {
     pub(crate) fn from_safetensors(
         tensors: &SafeTensors<'_>,
         config: &RecConfig,
@@ -355,28 +355,38 @@ fn small_block_specs() -> Vec<BlockSpec> {
 }
 
 /// Returns the recognizer config for the small or medium tier.
-pub(crate) fn rec_config(recognizer: crate::ocr::OcrRecognizer) -> RecConfig {
-    use crate::ocr::OcrRecognizer;
-    match recognizer {
-        OcrRecognizer::PpOcrV6SmallRec => RecConfig {
-            stem_base: 48,
-            block_specs: small_block_specs,
-            backbone_out: 384,
-            dim: 120,
-            head_dim: 15,
-            mlp_hidden: 240,
-        },
-        OcrRecognizer::PpOcrV6MediumRec => RecConfig {
-            stem_base: 64,
-            block_specs: medium_block_specs,
-            backbone_out: 768,
-            dim: 192,
-            head_dim: 24,
-            mlp_hidden: 768,
-        },
-        OcrRecognizer::PpOcrV6TinyRec => unreachable!(
+pub(crate) fn rec_config(model: crate::ocr::OcrRecognitionModel) -> RecConfig {
+    use crate::ocr::OcrRecognitionModel;
+    match model {
+        OcrRecognitionModel::PpOcrV6Small => small_rec_config(),
+        OcrRecognitionModel::PpOcrV6Medium => medium_rec_config(),
+        OcrRecognitionModel::PpOcrV6Tiny => unreachable!(
             "tiny recognizer uses the conv-only head variant, not RecConfig"
         ),
+    }
+}
+
+/// Returns the small-tier native recognizer config.
+fn small_rec_config() -> RecConfig {
+    RecConfig {
+        stem_base: 48,
+        block_specs: small_block_specs,
+        backbone_out: 384,
+        dim: 120,
+        head_dim: 15,
+        mlp_hidden: 240,
+    }
+}
+
+/// Returns the medium-tier native recognizer config.
+fn medium_rec_config() -> RecConfig {
+    RecConfig {
+        stem_base: 64,
+        block_specs: medium_block_specs,
+        backbone_out: 768,
+        dim: 192,
+        head_dim: 24,
+        mlp_hidden: 768,
     }
 }
 

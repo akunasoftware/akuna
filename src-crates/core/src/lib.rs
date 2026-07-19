@@ -1,18 +1,25 @@
 //! Akuna core knowledge tooling library.
 //!
-//! Feature-gated modules for file-type detection, embeddings, extraction,
-//! layout, OCR, reranking, and graph storage. Enable only the features you need.
+//! Feature-gated capabilities for file-type detection, embeddings, extraction,
+//! OCR, and reranking.
 //!
 //! # Example
 //!
-//! ```ignore
-//! use akuna_core::extraction::{document, ExtractionConfig};
-//!
-//! # async fn example() -> Result<(), akuna_core::extraction::FileExtractionError> {
-//! let result = document::from_path("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
+//! ```no_run
+//! # #[cfg(feature = "extraction")]
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use akuna_core::extraction::{extract_file, ExtractionConfig};
+//! let result = extract_file("path/to/file.pdf".as_ref(), &ExtractionConfig::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
+
+/// Package name used for platform integration.
+pub const PACKAGE_NAME: &str = "akuna";
+
+/// Shared crate-local test helpers.
+#[cfg(all(test, any(feature = "detection", feature = "embedding")))]
+mod testkit;
 
 /// File-type detection APIs.
 #[cfg(feature = "detection")]
@@ -26,13 +33,9 @@ pub mod embedding;
 #[cfg(feature = "reranking")]
 pub mod reranking;
 
-/// Image OCR APIs.
+/// Image OCR and document layout APIs.
 #[cfg(feature = "ocr")]
 pub mod ocr;
-
-/// Document layout detection APIs.
-#[cfg(feature = "layout")]
-pub mod layout;
 
 /// Shared ML model helpers.
 #[cfg(feature = "ml")]
@@ -41,7 +44,3 @@ mod ml;
 /// File extraction APIs.
 #[cfg(feature = "extraction")]
 pub mod extraction;
-
-/// Graph storage and retrieval APIs.
-#[cfg(feature = "storage")]
-pub mod storage;

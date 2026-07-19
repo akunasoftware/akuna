@@ -16,7 +16,7 @@ use tokenizers::{Tokenizer, TruncationParams};
 
 use crate::embedding::models::bert::{
     download_hf_model, mean_pooling, normalize_l2, prompt_sentences,
-    sentence_transformers_max_length, tokenize_batch,
+    tokenize_batch,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,7 +79,7 @@ pub(crate) struct MpnetEmbeddingModel<B: Backend> {
 
 impl MpnetConfig {
     fn load_from_hf(path: impl AsRef<Path>) -> Result<Self> {
-        crate::ml::load_json_config(path.as_ref(), "embedding config")
+        crate::ml::text::load_json_config(path.as_ref(), "embedding config")
     }
 
     fn init<B: Backend>(&self, device: &B::Device) -> MpnetModel<B> {
@@ -316,10 +316,11 @@ where
     }
 }
 
-/// Loads a pretrained MPNet embedding model from Hugging Face.
+/// Loads an MPNet embedding model.
 pub(crate) async fn load_pretrained_mpnet_embedding<B>(
     device: &B::Device,
     repo_id: &str,
+    max_length: usize,
     cache_dir: Option<PathBuf>,
 ) -> Result<MpnetEmbeddingModel<B>>
 where
@@ -337,11 +338,8 @@ where
                 files.tokenizer_path.display()
             )
         })?;
-    let max_length = sentence_transformers_max_length(
-        files.sentence_bert_config_path.as_deref(),
-    )?
-    .unwrap_or(config.max_position_embeddings)
-    .min(config.max_position_embeddings.saturating_sub(2));
+    let max_length =
+        max_length.min(config.max_position_embeddings.saturating_sub(2));
     tokenizer
         .with_truncation(Some(TruncationParams {
             max_length,

@@ -137,7 +137,7 @@ impl<B: Backend<FloatElem = f32>> InputConv<B> {
 
 /// Native PP-OCRv6 detector.
 #[derive(Debug)]
-pub(crate) struct PpOcrDetector<B: Backend> {
+pub(crate) struct PpOcrTextDetector<B: Backend> {
     stem1: ConvLayer<B>,
     stem2a: ConvLayer<B>,
     stem2b: ConvLayer<B>,
@@ -166,7 +166,7 @@ pub(crate) struct DetConfig {
     head_width: usize,
 }
 
-impl<B: Backend<FloatElem = f32>> PpOcrDetector<B> {
+impl<B: Backend<FloatElem = f32>> PpOcrTextDetector<B> {
     pub(crate) fn from_safetensors(
         tensors: &SafeTensors<'_>,
         config: &DetConfig,
@@ -341,34 +341,44 @@ impl<B: Backend<FloatElem = f32>> PpOcrDetector<B> {
 }
 
 /// Returns the detector config for the small or tiny tier.
-pub(crate) fn det_config(detector: crate::ocr::OcrDetector) -> DetConfig {
-    use crate::ocr::OcrDetector;
-    match detector {
-        OcrDetector::PpOcrV6SmallDet => DetConfig {
-            stem_base: 24,
-            block_specs: small_block_specs,
-            stage_channels: [48, 96, 192, 384],
-            neck_width: 96,
-            insert_se_reduced: 24,
-            input_proj: 24,
-            input_se_reduced: 6,
-            input_dw_kernel: 7,
-            head_width: 24,
-        },
-        OcrDetector::PpOcrV6TinyDet => DetConfig {
-            stem_base: 16,
-            block_specs: tiny_block_specs,
-            stage_channels: [32, 48, 64, 160],
-            neck_width: 64,
-            insert_se_reduced: 16,
-            input_proj: 16,
-            input_se_reduced: 4,
-            input_dw_kernel: 5,
-            head_width: 16,
-        },
-        OcrDetector::PpOcrV6MediumDet => unreachable!(
+pub(crate) fn det_config(model: crate::ocr::OcrDetectionModel) -> DetConfig {
+    use crate::ocr::OcrDetectionModel;
+    match model {
+        OcrDetectionModel::PpOcrV6Small => small_det_config(),
+        OcrDetectionModel::PpOcrV6Tiny => tiny_det_config(),
+        OcrDetectionModel::PpOcrV6Medium => unreachable!(
             "medium detector uses the LKPAN variant, not DetConfig"
         ),
+    }
+}
+
+/// Returns the small-tier native detector config.
+fn small_det_config() -> DetConfig {
+    DetConfig {
+        stem_base: 24,
+        block_specs: small_block_specs,
+        stage_channels: [48, 96, 192, 384],
+        neck_width: 96,
+        insert_se_reduced: 24,
+        input_proj: 24,
+        input_se_reduced: 6,
+        input_dw_kernel: 7,
+        head_width: 24,
+    }
+}
+
+/// Returns the tiny-tier native detector config.
+fn tiny_det_config() -> DetConfig {
+    DetConfig {
+        stem_base: 16,
+        block_specs: tiny_block_specs,
+        stage_channels: [32, 48, 64, 160],
+        neck_width: 64,
+        insert_se_reduced: 16,
+        input_proj: 16,
+        input_se_reduced: 4,
+        input_dw_kernel: 5,
+        head_width: 16,
     }
 }
 

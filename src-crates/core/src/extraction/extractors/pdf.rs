@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::extraction::{
@@ -93,24 +93,25 @@ pub(in crate::extraction) fn extract(
         .enumerate()
         .map(|(index, part)| part.into_extraction_part(index))
         .collect::<Vec<_>>();
-
-    if parts.len() > 1 {
-        let part_count = parts.len();
-        let duration_ms = started.elapsed().as_millis() as u64;
-        return Ok(DocumentContent {
+    let mut content = if parts.is_empty() {
+        DocumentContent::from_text(text)
+    } else {
+        DocumentContent {
             canonical_text: Some(text),
             parts,
-            pipeline: vec![pipeline::step(
-                "parsing",
-                "pdf_oxide",
-                duration_ms,
-                HashMap::from([
-                    ("pages".to_owned(), page_count),
-                    ("parts".to_owned(), part_count),
-                ]),
-            )],
-        });
-    }
+            pipeline: Vec::new(),
+        }
+    };
+    let audit = pipeline::step(
+        crate::extraction::ExtractionPipelineStepKind::Parsing,
+        "pdf_oxide",
+        started.elapsed().as_millis() as u64,
+        BTreeMap::from([
+            ("pages".to_owned(), page_count as u64),
+            ("parts".to_owned(), content.parts.len() as u64),
+        ]),
+    );
 
-    Ok(DocumentContent::from_text(text))
+    content.pipeline.push(audit);
+    Ok(content)
 }
