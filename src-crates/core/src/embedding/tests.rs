@@ -1,6 +1,5 @@
 use super::*;
-use crate::ml::backend::{Backend, cpu_device};
-use burn::tensor::Tensor;
+use crate::ml::backend::cpu_device;
 
 #[test]
 fn api_options_default_uses_minilm_l12() {

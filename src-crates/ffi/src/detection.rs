@@ -69,9 +69,8 @@ impl FileTypeDetector {
     /// Builds a file-type detector.
     #[uniffi::constructor]
     pub fn new() -> Result<Self, DetectionError> {
-        let inner = crate::stack::run(core_detection::FileTypeDetector::new)
-            .map_err(to_error)?
-            .map_err(to_error)?;
+        let inner =
+            core_detection::FileTypeDetector::new().map_err(to_error)?;
         Ok(Self { inner })
     }
 
@@ -80,8 +79,8 @@ impl FileTypeDetector {
         &self,
         data: Vec<u8>,
     ) -> Result<FileType, DetectionError> {
-        crate::stack::run(|| self.inner.identify_bytes(&data))
-            .map_err(to_error)?
+        self.inner
+            .identify_bytes(&data)
             .map(FileType::from)
             .map_err(to_error)
     }
@@ -91,8 +90,8 @@ impl FileTypeDetector {
         &self,
         path: String,
     ) -> Result<FileType, DetectionError> {
-        crate::stack::run(|| self.inner.identify_file(Path::new(&path)))
-            .map_err(to_error)?
+        self.inner
+            .identify_file(Path::new(&path))
             .map(FileType::from)
             .map_err(to_error)
     }

@@ -72,11 +72,6 @@ impl FileType {
         self.origin
     }
 
-    /// Returns the resolution confidence from 0 to 1.
-    pub fn score(&self) -> f32 {
-        self.confidence()
-    }
-
     /// Builds a rule-resolved type from the vendored label metadata.
     pub(crate) fn ruled(content_type: ContentType) -> Self {
         Self::new(content_type, 1.0, DetectionOrigin::Rule)

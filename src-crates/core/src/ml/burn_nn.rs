@@ -68,7 +68,7 @@ pub(crate) fn read_conv_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Loads a 1-D convolution weight as a 2-D convolution weight.
+/// Reads `[out, in/groups, k]` as `[out, in/groups, 1, k]` for height-1 Conv2d.
 pub(crate) fn read_conv1d_as_conv2d_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,
@@ -101,7 +101,7 @@ pub(crate) fn read_conv_transpose_weight<B: Backend<FloatElem = f32>>(
     ))
 }
 
-/// Loads a linear layer weight tensor.
+/// Reads `[out, in]` and transposes it to `[in, out]` for `x @ w`.
 pub(crate) fn read_linear_weight<B: Backend<FloatElem = f32>>(
     tensors: &SafeTensors<'_>,
     name: &str,

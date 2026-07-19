@@ -2,12 +2,16 @@ from pathlib import Path
 from functools import lru_cache
 
 import akuna_core
-from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub import list_repo_files
 from magika import Magika
 import pytest
 
+from _fixtures import (
+    HF_REPO_TEST_CORPUS,
+    HF_REPO_TEST_CORPUS_REVISION,
+    fixture_path,
+)
 
-HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
 HF_CONTENT_PREFIX = "content/"
 SAMPLES = [
     ("sample.txt", b"knowledge is more than memory\n"),
@@ -20,14 +24,18 @@ def corpus_paths() -> tuple[tuple[str, Path], ...]:
     """Return downloaded test-corpus content files."""
     names = sorted(
         name
-        for name in list_repo_files(HF_REPO_TEST_CORPUS, repo_type="dataset")
+        for name in list_repo_files(
+            HF_REPO_TEST_CORPUS,
+            repo_type="dataset",
+            revision=HF_REPO_TEST_CORPUS_REVISION,
+        )
         if name.startswith(HF_CONTENT_PREFIX)
     )
     assert names
     return tuple(
         (
             name,
-            Path(hf_hub_download(HF_REPO_TEST_CORPUS, name, repo_type="dataset")),
+            fixture_path(name),
         )
         for name in names
     )
@@ -61,10 +69,12 @@ def test_identify_bytes_and_file_match(tmp_path: Path) -> None:
 
         bytes_result = detector.identify_bytes(data)
         path_result = detector.identify_path(str(path))
-        assert_file_type_matches(bytes_result, reference.identify_bytes(data))
-        assert_file_type_matches(path_result, reference.identify_path(path))
-        assert_model_result(bytes_result, reference.identify_bytes(data))
-        assert_model_result(path_result, reference.identify_path(path))
+        expected_bytes = reference.identify_bytes(data)
+        expected_path = reference.identify_path(path)
+        assert_file_type_matches(bytes_result, expected_bytes)
+        assert_file_type_matches(path_result, expected_path)
+        assert_model_result(bytes_result, expected_bytes)
+        assert_model_result(path_result, expected_path)
 
 
 def test_identify_corpus_matches_reference() -> None:

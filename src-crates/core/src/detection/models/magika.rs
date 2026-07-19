@@ -383,7 +383,15 @@ pub(in crate::detection) fn sorted_row(
 ) -> Result<Vec<(usize, f32)>, DetectionError> {
     if row.len() != DENSE_OUT {
         return Err(DetectionError::InvalidModel {
-            message: format!("unexpected logits row size: {}", row.len()),
+            message: format!("unexpected probability row size: {}", row.len()),
+        });
+    }
+    if row
+        .iter()
+        .any(|score| !score.is_finite() || !(0.0..=1.0).contains(score))
+    {
+        return Err(DetectionError::InvalidModel {
+            message: "probability row contains an invalid score".to_owned(),
         });
     }
 

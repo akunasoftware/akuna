@@ -92,6 +92,7 @@ dependencies = [
  "pdf_oxide",
  "pollster",
  "protobuf",
+ "quick-xml",
  "rbook",
  "safetensors 0.7.0",
  "serde",

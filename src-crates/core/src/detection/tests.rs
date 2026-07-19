@@ -71,6 +71,18 @@ fn path_sample_keeps_io_source() {
 }
 
 #[test]
+fn path_sample_rejects_non_files() {
+    let error = super::detector::read_file_sample(std::env::temp_dir())
+        .expect_err("directory input should fail");
+
+    assert!(matches!(
+        error,
+        DetectionError::Io { source }
+            if source.kind() == std::io::ErrorKind::InvalidInput
+    ));
+}
+
+#[test]
 fn tied_scores_use_label_index_order() {
     let mut scores = vec![0.0; vendor_model::NUM_LABELS];
     scores[5] = 0.8;
@@ -78,6 +90,19 @@ fn tied_scores_use_label_index_order() {
 
     let sorted = sorted_row(scores).expect("valid score row");
     assert_eq!(&sorted[..2], &[(2, 0.8), (5, 0.8)]);
+}
+
+#[test]
+fn invalid_scores_are_rejected() {
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 1.1] {
+        let mut scores = vec![0.0; vendor_model::NUM_LABELS];
+        scores[0] = invalid;
+
+        assert!(matches!(
+            sorted_row(scores),
+            Err(DetectionError::InvalidModel { .. })
+        ));
+    }
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use super::models::pp_doclayout::{LayoutDetection, sort_detections_by_order};
 
 #[test]
-fn order_ties_are_stable() {
+fn order_and_bbox_ties_use_label() {
     let detections = vec![
         LayoutDetection {
             label: "z".to_string(),

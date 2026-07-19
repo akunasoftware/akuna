@@ -3,8 +3,8 @@
 //! # Example
 //!
 //! ```text
-//! <app> --help
-//! <app> extract ./notes.md --metadata --text
+//! akuna --help
+//! akuna extract ./notes.md --metadata --text
 //! ```
 
 mod cli;

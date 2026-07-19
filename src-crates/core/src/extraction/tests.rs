@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 
 use super::{
     DetectionOrigin, ExtractionConfig, ExtractionMetadata,
@@ -8,39 +6,11 @@ use super::{
     extract_file,
 };
 
-const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
-const HF_REPO_CONTENT_PREFIX: &str = "content/fixtures";
-static CORPUS_FIXTURES: OnceLock<Mutex<HashMap<String, PathBuf>>> =
-    OnceLock::new();
-
-/// Returns a named test corpus fixture.
-fn corpus_fixture(name: &str) -> anyhow::Result<PathBuf> {
-    let cache = CORPUS_FIXTURES.get_or_init(Default::default);
-    let cached = {
-        let cache = cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
-        cache.get(name).cloned()
-    };
-    if let Some(path) = cached {
-        return Ok(path);
-    }
-
-    let client = hf_hub::api::sync::ApiBuilder::new()
-        .with_progress(false)
-        .build()?;
-    let repo = client.dataset(HF_REPO_TEST_CORPUS.into());
-    let path = repo.download(&format!("{HF_REPO_CONTENT_PREFIX}/{name}"))?;
-    let mut cache = cache
-        .lock()
-        .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
-    cache.insert(name.to_string(), path.clone());
-    Ok(path)
-}
-
 /// Fetches an extraction fixture from the shared corpus.
 fn get_extraction_fixture(name: &str) -> PathBuf {
-    corpus_fixture(name).expect("Could not fetch {name} in corpus fixtures")
+    crate::testkit::corpus_fixture(name).unwrap_or_else(|error| {
+        panic!("Could not fetch {name} in corpus fixtures: {error:#}")
+    })
 }
 
 /// Asserts a fixture extracts expected text.
@@ -286,6 +256,17 @@ fn extracts_markup_bytes_with_quoted_delimiters()
 }
 
 #[test]
+fn extracts_visible_markup_text() -> Result<(), FileExtractionError> {
+    let text = super::extractors::text::extract_bytes(
+        &test_metadata("text/html"),
+        b"<style>.hidden { color: red }</style><p><![CDATA[visible <text>]]></p><SCRIPT type='text/javascript'>hidden()</SCRIPT>",
+    )?;
+
+    assert_eq!(text, "visible <text>");
+    Ok(())
+}
+
+#[test]
 fn trims_decoded_markup_entities() -> Result<(), FileExtractionError> {
     let text = super::extractors::text::extract_bytes(
         &test_metadata("text/html"),
@@ -400,6 +381,23 @@ fn preserves_plain_text_as_one_part() {
     assert_eq!(content.parts[0].kind, PartKind::Text);
     assert_eq!(content.parts[0].text.as_deref(), Some(text));
     assert!(content.parts[0].provenance.is_none());
+}
+
+#[test]
+fn detection_io_errors_remain_io() {
+    let error =
+        FileExtractionError::from(crate::detection::DetectionError::Io {
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "missing test input",
+            ),
+        });
+
+    assert!(matches!(
+        error,
+        FileExtractionError::Io { source }
+            if source.kind() == std::io::ErrorKind::NotFound
+    ));
 }
 
 #[cfg(feature = "ocr")]

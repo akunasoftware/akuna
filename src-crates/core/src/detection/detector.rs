@@ -50,12 +50,22 @@ impl FileTypeDetector {
 pub(super) fn read_file_sample(
     path: impl AsRef<Path>,
 ) -> Result<Vec<u8>, DetectionError> {
+    let path = path.as_ref();
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "detection input is not a regular file",
+        )
+        .into());
+    }
+
     let mut file = File::open(path)?;
     let block_size = vendor_model::CONFIG.block_size;
     let sample_size = block_size * 2;
     let mut bytes = Vec::with_capacity(sample_size);
 
-    if file.metadata()?.len() <= sample_size as u64 {
+    if metadata.len() <= sample_size as u64 {
         file.take(sample_size as u64).read_to_end(&mut bytes)?;
         return Ok(bytes);
     }

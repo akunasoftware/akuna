@@ -1,5 +1,8 @@
 use std::path::Path;
 
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
+
 use crate::extraction::{ExtractionMetadata, FileExtractionError};
 
 /// Extract EPUB content by rendering each chapter to plain text.
@@ -12,7 +15,10 @@ pub(in crate::extraction) fn extract_epub(
     for data_result in doc.reader() {
         let data = data_result?;
         let html = data.into_string();
-        text.push_str(&plain_text_from_markup(&html));
+        text.push_str(
+            &plain_text_from_markup(&html)
+                .map_err(|source| markup_error("rbook-epub", source))?,
+        );
         text.push('\n');
     }
 
@@ -32,7 +38,8 @@ pub(in crate::extraction) fn extract_bytes(
     })?;
 
     if is_markup(&metadata.mime_type) {
-        return Ok(plain_text_from_markup(text));
+        return plain_text_from_markup(text)
+            .map_err(|source| markup_error("direct", source));
     }
 
     Ok(text.to_string())
@@ -51,40 +58,85 @@ fn is_markup(mime_type: &str) -> bool {
         )
 }
 
-/// Converts simple tag-based markup to normalized visible text.
-fn plain_text_from_markup(markup: &str) -> String {
+/// Converts tag-based markup to normalized visible text.
+fn plain_text_from_markup(markup: &str) -> quick_xml::Result<String> {
+    let mut reader = Reader::from_str(markup);
+    reader.config_mut().allow_dangling_amp = true;
+    reader.config_mut().allow_unmatched_ends = true;
+    reader.config_mut().check_end_names = false;
     let mut text = String::with_capacity(markup.len());
-    let mut in_tag = false;
-    let mut quote = None;
+    let mut hidden_depth = 0;
     let mut last_was_whitespace = true;
 
-    for character in markup.chars() {
-        match character {
-            '<' if !in_tag => {
-                in_tag = true;
-                quote = None;
+    loop {
+        match reader.read_event()? {
+            Event::Start(_) if hidden_depth > 0 => hidden_depth += 1,
+            Event::Start(element)
+                if is_hidden_element(element.local_name().as_ref()) =>
+            {
+                hidden_depth = 1;
+            }
+            Event::Start(_) | Event::Empty(_) if hidden_depth == 0 => {
                 push_space(&mut text, &mut last_was_whitespace);
             }
-            '"' | '\'' if in_tag => {
-                if quote == Some(character) {
-                    quote = None;
-                } else if quote.is_none() {
-                    quote = Some(character);
-                }
-            }
-            '>' if in_tag && quote.is_none() => in_tag = false,
-            _ if in_tag => {}
-            _ if character.is_whitespace() => {
+            Event::End(_) if hidden_depth > 0 => hidden_depth -= 1,
+            Event::End(_) => {
                 push_space(&mut text, &mut last_was_whitespace);
             }
-            _ => {
-                text.push(character);
-                last_was_whitespace = false;
+            Event::Text(value) if hidden_depth == 0 => {
+                push_text(
+                    &mut text,
+                    &mut last_was_whitespace,
+                    &value.html_content()?,
+                );
             }
+            Event::CData(value) if hidden_depth == 0 => {
+                push_text(
+                    &mut text,
+                    &mut last_was_whitespace,
+                    &value.decode()?,
+                );
+            }
+            Event::GeneralRef(value) if hidden_depth == 0 => {
+                let value = if let Some(character) = value.resolve_char_ref()? {
+                    character.to_string()
+                } else {
+                    let name = value.decode()?;
+                    match name.as_ref() {
+                        "amp" => "&".to_string(),
+                        "apos" | "#39" => "'".to_string(),
+                        "gt" => ">".to_string(),
+                        "lt" => "<".to_string(),
+                        "nbsp" => " ".to_string(),
+                        "quot" => "\"".to_string(),
+                        _ => format!("&{name};"),
+                    }
+                };
+                push_text(&mut text, &mut last_was_whitespace, &value);
+            }
+            Event::Eof => break,
+            _ => {}
         }
     }
 
-    decode_common_entities(text.trim()).trim().to_string()
+    Ok(text.trim().to_string())
+}
+
+/// Returns whether an element's content is not visible document text.
+fn is_hidden_element(name: &[u8]) -> bool {
+    name.eq_ignore_ascii_case(b"script") || name.eq_ignore_ascii_case(b"style")
+}
+
+/// Appends text while collapsing whitespace.
+fn push_text(text: &mut String, last_was_whitespace: &mut bool, value: &str) {
+    for character in value.chars() {
+        if character.is_whitespace() {
+            push_space(text, last_was_whitespace);
+        } else {
+            text.push(character);
+            *last_was_whitespace = false;
+        }
+    }
 }
 
 /// Appends one whitespace separator when needed.
@@ -95,12 +147,13 @@ fn push_space(text: &mut String, last_was_whitespace: &mut bool) {
     }
 }
 
-/// Decodes entities common in fixture markup.
-fn decode_common_entities(text: &str) -> String {
-    text.replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
+/// Converts parser failures at the extraction boundary.
+fn markup_error(
+    engine: &'static str,
+    source: quick_xml::Error,
+) -> FileExtractionError {
+    FileExtractionError::ExtractionEngine {
+        engine,
+        source: Box::new(source),
+    }
 }

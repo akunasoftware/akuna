@@ -81,11 +81,9 @@ pub struct TextReranker {
 pub async fn load_text_reranker(
     options: Option<TextRerankerOptions>,
 ) -> Result<TextReranker, RerankingError> {
-    let inner = crate::stack::run_async(core_reranking::TextReranker::new(
-        core_options(options),
-    ))
-    .map_err(to_error)?
-    .map_err(to_error)?;
+    let inner = core_reranking::TextReranker::new(core_options(options))
+        .await
+        .map_err(to_error)?;
     Ok(TextReranker { inner })
 }
 
@@ -97,9 +95,7 @@ impl TextReranker {
         query: String,
         document: String,
     ) -> Result<f32, RerankingError> {
-        crate::stack::run(|| self.inner.score(query, document))
-            .map_err(to_error)?
-            .map_err(to_error)
+        self.inner.score(query, document).map_err(to_error)
     }
 
     /// Scores query/document pairs in batches.
@@ -116,9 +112,7 @@ impl TextReranker {
             .map(usize::try_from)
             .transpose()
             .map_err(to_error)?;
-        crate::stack::run(|| self.inner.score_batch(&pairs, batch_size))
-            .map_err(to_error)?
-            .map_err(to_error)
+        self.inner.score_batch(&pairs, batch_size).map_err(to_error)
     }
 
     /// Ranks documents against a query.
@@ -127,8 +121,8 @@ impl TextReranker {
         query: String,
         documents: Vec<String>,
     ) -> Result<Vec<RerankResult>, RerankingError> {
-        crate::stack::run(|| self.inner.rerank(query, &documents))
-            .map_err(to_error)?
+        self.inner
+            .rerank(query, &documents)
             .map_err(to_error)?
             .into_iter()
             .map(ffi_result)
@@ -143,14 +137,12 @@ impl TextReranker {
         options: RerankOptions,
     ) -> Result<Vec<RerankResult>, RerankingError> {
         let options = core_rerank_options(options)?;
-        crate::stack::run(|| {
-            self.inner.rerank_with_options(query, &documents, options)
-        })
-        .map_err(to_error)?
-        .map_err(to_error)?
-        .into_iter()
-        .map(ffi_result)
-        .collect()
+        self.inner
+            .rerank_with_options(query, &documents, options)
+            .map_err(to_error)?
+            .into_iter()
+            .map(ffi_result)
+            .collect()
     }
 
     /// Returns the loaded reranking checkpoint.
