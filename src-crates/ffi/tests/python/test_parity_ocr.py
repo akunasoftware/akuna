@@ -1,14 +1,11 @@
-from pathlib import Path
-
 import akuna_core
 import cv2
 import numpy as np
 import pytest
-from huggingface_hub import hf_hub_download
 from paddleocr import PaddleOCR
 
+from _fixtures import fixture_path
 
-HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
 IMAGE_FIXTURE = "content/fixtures/text-hidpi.png"
 PADDLE_OCR_PARAMS = {
     "text_det_limit_side_len": 736,
@@ -91,11 +88,6 @@ of the earth he has to live in.
 Source: section 10
 2
 """
-
-
-def fixture_path(name: str) -> Path:
-    """Return a test corpus fixture path."""
-    return Path(hf_hub_download(HF_REPO_TEST_CORPUS, name, repo_type="dataset"))
 
 
 def normalise_text(text: str) -> str:

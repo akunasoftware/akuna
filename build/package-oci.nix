@@ -12,7 +12,7 @@ let
     pkgs.coreutils
     pkgs.lsof
   ]
-  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+  ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     pkgs.iproute2
   ];
 in

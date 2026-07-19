@@ -77,8 +77,8 @@ let
       nix path-info -rSh "$out"
     '')
 
-    # Build OCI image and load into container runtime
-    (pkgs.writeShellScriptBin "nix-oci-build" ''
+    # Build OCI image and load into container runtime (current system arch only)
+    (pkgs.writeShellScriptBin "nix-build-oci" ''
       set -euo pipefail
 
       target_system="''${NIX_TARGET_SYSTEM:-$(nix eval --impure --raw --expr 'builtins.currentSystem')}"
@@ -89,6 +89,13 @@ let
 
       nix build ".#packages.$target_system.oci" -o "$image_out"
       docker load --input "$image_out"
+    '')
+
+    # Build default package for all architectures in outputs
+    (pkgs.writeShellScriptBin "nix-build-default-all" ''
+      nix eval --json .#packages --apply builtins.attrNames \
+        | jq -r '.[] | ".#packages.\(.).default"' \
+        | xargs nix build
     '')
   ];
 
@@ -125,7 +132,7 @@ pkgs.mkShell {
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
     RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
   }
-  // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+  // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     LIBRARY_PATH = mainPackage.passthru.env.runtime.LIBRARY_PATH;
     LD_LIBRARY_PATH = mainPackage.passthru.env.runtime.LD_LIBRARY_PATH;
     VK_DRIVER_FILES = mainPackage.passthru.env.runtime.VK_DRIVER_FILES;
@@ -137,5 +144,4 @@ pkgs.mkShell {
     # set env using workspace env script (so it can still be used by non-nix users)
     . "$PROJECT_ROOT/build/scripts/ws-env.sh"
   '';
-
 }

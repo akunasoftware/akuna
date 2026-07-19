@@ -2,7 +2,7 @@
   description = "Nix flake for project development and packaging";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
@@ -57,7 +57,10 @@
         in
         {
           packages = {
+            # main cli binary output
             default = mainPackage;
+
+            # docker container
             oci = mkOciPackage (guestSystemFor system);
           };
 

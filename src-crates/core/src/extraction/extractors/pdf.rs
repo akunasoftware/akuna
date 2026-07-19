@@ -93,26 +93,25 @@ pub(in crate::extraction) fn extract(
         .enumerate()
         .map(|(index, part)| part.into_extraction_part(index))
         .collect::<Vec<_>>();
-    let part_count = parts.len();
+    let mut content = if parts.is_empty() {
+        DocumentContent::from_text(text)
+    } else {
+        DocumentContent {
+            canonical_text: Some(text),
+            parts,
+            pipeline: Vec::new(),
+        }
+    };
     let audit = pipeline::step(
         crate::extraction::ExtractionPipelineStepKind::Parsing,
         "pdf_oxide",
         started.elapsed().as_millis() as u64,
         BTreeMap::from([
             ("pages".to_owned(), page_count as u64),
-            ("parts".to_owned(), part_count as u64),
+            ("parts".to_owned(), content.parts.len() as u64),
         ]),
     );
 
-    if !parts.is_empty() {
-        return Ok(DocumentContent {
-            canonical_text: Some(text),
-            parts,
-            pipeline: vec![audit],
-        });
-    }
-
-    let mut content = DocumentContent::from_text(text);
     content.pipeline.push(audit);
     Ok(content)
 }

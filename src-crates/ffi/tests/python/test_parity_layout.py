@@ -4,20 +4,14 @@ import akuna_core
 import cv2
 import numpy as np
 import pytest
-from huggingface_hub import hf_hub_download
 from paddlex import create_model
 
+from _fixtures import fixture_path
 
-HF_REPO_TEST_CORPUS = "akunasoftware/test-corpus"
 IMAGE_FIXTURE = "content/fixtures/text-hidpi.png"
 IOU_THRESHOLD = np.float32(0.85)
 # Calibrated from PP-DocLayoutV3 parity on the hosted fixture: 0.003990 max.
 SCORE_TOLERANCE = np.float32(0.005)
-
-
-def fixture_path(name: str) -> Path:
-    """Return a test corpus fixture path."""
-    return Path(hf_hub_download(HF_REPO_TEST_CORPUS, name, repo_type="dataset"))
 
 
 def reference_blocks(image: Path) -> list[tuple[str, np.ndarray, np.float32, int]]:

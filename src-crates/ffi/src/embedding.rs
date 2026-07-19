@@ -62,11 +62,9 @@ pub struct TextEmbedder {
 pub async fn load_text_embedder(
     options: Option<TextEmbedderOptions>,
 ) -> Result<TextEmbedder, EmbeddingError> {
-    let inner = crate::stack::run_async(core_embedding::TextEmbedder::new(
-        core_options(options),
-    ))
-    .map_err(to_error)?
-    .map_err(to_error)?;
+    let inner = core_embedding::TextEmbedder::new(core_options(options))
+        .await
+        .map_err(to_error)?;
     Ok(TextEmbedder { inner })
 }
 
@@ -74,9 +72,7 @@ pub async fn load_text_embedder(
 impl TextEmbedder {
     /// Embeds one document.
     pub fn embed(&self, document: String) -> Result<Vec<f32>, EmbeddingError> {
-        crate::stack::run(|| self.inner.embed(document))
-            .map_err(to_error)?
-            .map_err(to_error)
+        self.inner.embed(document).map_err(to_error)
     }
 
     /// Embeds one document with an input prompt.
@@ -85,11 +81,9 @@ impl TextEmbedder {
         document: String,
         prompt: Option<String>,
     ) -> Result<Vec<f32>, EmbeddingError> {
-        crate::stack::run(|| {
-            self.inner.embed_with_prompt(document, prompt.as_deref())
-        })
-        .map_err(to_error)?
-        .map_err(to_error)
+        self.inner
+            .embed_with_prompt(document, prompt.as_deref())
+            .map_err(to_error)
     }
 
     /// Embeds documents in batches.
@@ -102,8 +96,8 @@ impl TextEmbedder {
             .map(usize::try_from)
             .transpose()
             .map_err(to_error)?;
-        crate::stack::run(|| self.inner.embed_batch(&documents, batch_size))
-            .map_err(to_error)?
+        self.inner
+            .embed_batch(&documents, batch_size)
             .map_err(to_error)
     }
 
@@ -118,15 +112,9 @@ impl TextEmbedder {
             .map(usize::try_from)
             .transpose()
             .map_err(to_error)?;
-        crate::stack::run(|| {
-            self.inner.embed_batch_with_prompt(
-                &documents,
-                batch_size,
-                prompt.as_deref(),
-            )
-        })
-        .map_err(to_error)?
-        .map_err(to_error)
+        self.inner
+            .embed_batch_with_prompt(&documents, batch_size, prompt.as_deref())
+            .map_err(to_error)
     }
 
     /// Returns the loaded embedding checkpoint.

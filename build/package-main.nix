@@ -24,14 +24,14 @@ let
   ];
 
   # Vulkan is required by the GPU backend on Linux.
-  runDependencies = lib.optionals pkgs.stdenv.isLinux [
+  runDependencies = lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     pkgs.vulkan-loader
   ];
 
   runtimeLibraryPath = lib.makeLibraryPath runDependencies;
 
   # Nix package runtime environment vars (do not use in devshell)
-  runtimeEnv = lib.optionalAttrs pkgs.stdenv.isLinux {
+  runtimeEnv = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     LD_LIBRARY_PATH = lib.concatStringsSep ":" [
       runtimeLibraryPath
       "/run/opengl-driver/lib"
@@ -47,7 +47,7 @@ let
     CARGO_HTTP_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
   }
-  // lib.optionalAttrs pkgs.stdenv.isDarwin {
+  // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
     NIX_LDFLAGS = "-dead_strip_dylibs";
   };
 
@@ -67,8 +67,8 @@ rustPlatform.buildRustPackage {
   doCheck = false;
   enableParallelBuilding = true;
 
-  # git-sourced dependencies require explicit hashes
   cargoLock = {
+    # Use Cargo.lock checksums instead of maintaining a separate cargoHash.
     lockFile = ../Cargo.lock;
   };
 
@@ -77,7 +77,8 @@ rustPlatform.buildRustPackage {
     "--package=${cargoPackageName}"
   ];
 
-  postInstall = lib.optionalString pkgs.stdenv.isLinux ''
+  # Remove unneeded symbols from the installed Linux binary to reduce its size.
+  postInstall = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
     strip --strip-unneeded "$out/bin/${pname}"
   '';
 
