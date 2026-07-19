@@ -259,7 +259,7 @@ fn extracts_markup_bytes_with_quoted_delimiters()
 fn extracts_visible_markup_text() -> Result<(), FileExtractionError> {
     let text = super::extractors::text::extract_bytes(
         &test_metadata("text/html"),
-        b"<style>.hidden { color: red }</style><p><![CDATA[visible <text>]]></p><SCRIPT type='text/javascript'>hidden()</SCRIPT>",
+        b"<style>.hidden::before { content: 'a < b'; }</style><p><![CDATA[visible <text>]]></p><SCRIPT type='text/javascript'>if (a < b) hidden()</SCRIPT>",
     )?;
 
     assert_eq!(text, "visible <text>");
