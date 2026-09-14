@@ -45,7 +45,13 @@ pub(crate) fn resize_linear_cv2(
     dst_w: usize,
     dst_h: usize,
 ) -> RgbImage {
-    let src = image.to_rgb8();
+    let converted;
+    let src = if let Some(rgb) = image.as_rgb8() {
+        rgb
+    } else {
+        converted = image.to_rgb8();
+        &converted
+    };
     let (sw, sh) = (src.width() as usize, src.height() as usize);
     let xc = linear_coeffs(dst_w, sw);
     let yc = linear_coeffs(dst_h, sh);
@@ -53,8 +59,8 @@ pub(crate) fn resize_linear_cv2(
     let src_stride = sw * 3;
     let dst_stride = dst_w * 3;
 
-    // Horizontal pass: `src * alpha` summed at full int precision (2048-scale).
-    let mut hbuf = vec![0i32; sh * dst_stride];
+    // Horizontal pass: cv2 shifts and packs each 2048-scale sum to i16.
+    let mut hbuf = vec![0i16; sh * dst_stride];
     for y in 0..sh {
         let srow = y * src_stride;
         let hrow = y * dst_stride;
@@ -65,7 +71,8 @@ pub(crate) fn resize_linear_cv2(
             for ch in 0..3 {
                 let p0 = raw[srow + c0 + ch] as i32;
                 let p1 = raw[srow + c1 + ch] as i32;
-                hbuf[out + ch] = p0 * a0 as i32 + p1 * a1 as i32;
+                hbuf[out + ch] =
+                    sat16((p0 * a0 as i32 + p1 * a1 as i32) >> 4) as i16;
             }
         }
     }
@@ -81,8 +88,8 @@ pub(crate) fn resize_linear_cv2(
         let orow = dy * dst_stride;
         let (b0, b1) = (b0 as i32, b1 as i32);
         for i in 0..dst_stride {
-            let s0 = sat16(hbuf[r0 + i] >> 4);
-            let s1 = sat16(hbuf[r1 + i] >> 4);
+            let s0 = i32::from(hbuf[r0 + i]);
+            let s1 = i32::from(hbuf[r1 + i]);
             let t = sat16(((s0 * b0) >> 16) + ((s1 * b1) >> 16));
             out_raw[orow + i] = ((t + 2) >> 2).clamp(0, 255) as u8;
         }

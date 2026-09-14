@@ -5,7 +5,12 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "ocr")]
 use anyhow::{Context, Result};
-#[cfg(any(feature = "embedding", feature = "ocr", feature = "reranking"))]
+#[cfg(any(
+    feature = "detection",
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking"
+))]
 use burn::tensor::{Tensor, backend::Backend};
 #[cfg(feature = "ocr")]
 use hf_hub::api::tokio::ApiBuilder;
@@ -34,7 +39,12 @@ pub(crate) mod transformer;
 mod tests;
 
 /// Contraction-dim chunk size for [`safe_matmul`].
-#[cfg(any(feature = "ocr", feature = "embedding", feature = "reranking"))]
+#[cfg(any(
+    feature = "detection",
+    feature = "ocr",
+    feature = "embedding",
+    feature = "reranking"
+))]
 pub(crate) const SAFE_MATMUL_K: usize = 256;
 
 /// A pinned Hugging Face model weight.
@@ -84,7 +94,12 @@ pub(crate) async fn fetch_hf_weight(
 }
 
 /// Computes `lhs @ rhs` for tensors of any rank.
-#[cfg(any(feature = "ocr", feature = "embedding", feature = "reranking"))]
+#[cfg(any(
+    feature = "detection",
+    feature = "ocr",
+    feature = "embedding",
+    feature = "reranking"
+))]
 pub(crate) fn safe_matmul<B: Backend, const D: usize>(
     lhs: Tensor<B, D>,
     rhs: Tensor<B, D>,

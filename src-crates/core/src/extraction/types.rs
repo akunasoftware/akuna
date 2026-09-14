@@ -213,4 +213,38 @@ impl DocumentContent {
 
         (!text.is_empty()).then_some(text)
     }
+
+    /// Returns whether canonical text can be produced without allocating it.
+    pub(in crate::extraction) fn has_text(&self) -> bool {
+        if self.canonical_text.is_some() {
+            return true;
+        }
+
+        let mut texts = self.parts.iter().filter_map(|part| part.text.as_ref());
+        texts
+            .next()
+            .is_some_and(|first| !first.is_empty() || texts.next().is_some())
+    }
+
+    /// Moves canonical text out when structured parts will not be returned.
+    pub(in crate::extraction) fn take_text(&mut self) -> Option<String> {
+        if self.canonical_text.is_some() {
+            return self.canonical_text.take();
+        }
+
+        let mut text: Option<String> = None;
+        for part in &mut self.parts {
+            let Some(part_text) = part.text.take() else {
+                continue;
+            };
+            match text.as_mut() {
+                Some(text) => {
+                    text.push_str("\n\n");
+                    text.push_str(&part_text);
+                }
+                None => text = Some(part_text),
+            }
+        }
+        text.filter(|text| !text.is_empty())
+    }
 }

@@ -27,4 +27,4 @@ cargo run --example uniffi-bindgen -p akuna-ffi -- "$library_path" "$bindings_di
 cp "$library_path" "$bindings_dir/$dylib"
 
 # Run cross-language parity after all native artifacts are ready.
-uv run --project "$PROJECT_ROOT/src-crates/ffi/tests/python" pytest "$PROJECT_ROOT/src-crates/ffi/tests/python"
+env -u PYTHONPATH uv run --project "$PROJECT_ROOT/src-crates/ffi/tests/python" pytest "$PROJECT_ROOT/src-crates/ffi/tests/python"

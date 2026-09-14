@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -13,7 +14,7 @@ use crate::ocr::models::pp_ocr::native::rec::PpOcrTextRecognizer;
 use crate::ocr::models::pp_ocr::native::rec_tiny::PpOcrTextRecognizerTiny;
 use crate::ocr::models::pp_ocr::native::{self};
 use crate::ocr::models::pp_ocr::postprocess::{
-    postprocess_detector, postprocess_recognizer,
+    RecognizedText, postprocess_detector, postprocess_recognizer,
 };
 use crate::ocr::models::pp_ocr::preprocess::{
     PpOcrInput, preprocess_detector, preprocess_recognizer,
@@ -49,7 +50,7 @@ enum RecognizerModel<B: Backend> {
 
 impl<B> PpOcrRuntime<B>
 where
-    B: Backend<FloatElem = f32>,
+    B: Backend<FloatElem = f32, IntElem = i32>,
 {
     pub(crate) async fn load(
         detection_model: OcrDetectionModel,
@@ -101,22 +102,69 @@ where
         )?;
 
         let recognizer_config = recognizer_config(self.recognition_model);
-        let rgb_image = image.to_rgb8();
-        let mut blocks = Vec::new();
+        let converted;
+        let rgb_image = if let Some(rgb_image) = image.as_rgb8() {
+            rgb_image
+        } else {
+            converted = image.to_rgb8();
+            &converted
+        };
+        let mut prepared = Vec::with_capacity(boxes.len());
         for text_box in boxes {
-            let crop = crop_box(&rgb_image, text_box.points)?;
+            let crop = crop_box(rgb_image, text_box.points)?;
             let recognizer_input =
                 preprocess_recognizer(&crop, &recognizer_config)?;
-            let recognizer_tensor = input_tensor(recognizer_input, device);
-            let recognizer_output =
-                self.recognizer_model.forward(recognizer_tensor);
-            let recognized = postprocess_recognizer(
-                recognizer_output,
-                &self.dictionary,
-                &recognizer_config,
-            )?;
+            prepared.push((text_box, recognizer_input));
+        }
+
+        // Crops sharing an input width batch into one forward pass, so short
+        // text (snapped to the nominal width) typically needs one or two
+        // passes per page instead of one sync per box.
+        const RECOGNIZER_BATCH: usize = 16;
+        let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (index, (_, input)) in prepared.iter().enumerate() {
+            groups.entry(input.width).or_default().push(index);
+        }
+        let mut recognized: Vec<Option<RecognizedText>> =
+            vec![None; prepared.len()];
+        for indices in groups.into_values() {
+            for chunk in indices.chunks(RECOGNIZER_BATCH) {
+                let sample = &prepared[chunk[0]].1;
+                let mut values =
+                    Vec::with_capacity(chunk.len() * sample.values.len());
+                for index in chunk {
+                    values.extend_from_slice(&prepared[*index].1.values);
+                }
+                let batch = Tensor::<B, 4>::from_data(
+                    TensorData::new(
+                        values,
+                        [
+                            chunk.len(),
+                            sample.channels,
+                            sample.height,
+                            sample.width,
+                        ],
+                    ),
+                    device,
+                );
+                let logits = self.recognizer_model.forward(batch);
+                let decoded = postprocess_recognizer(
+                    logits,
+                    &self.dictionary,
+                    &recognizer_config,
+                )?;
+                for (offset, text) in decoded.into_iter().enumerate() {
+                    recognized[chunk[offset]] = Some(text);
+                }
+            }
+        }
+
+        let mut blocks = Vec::new();
+        for (index, (text_box, _)) in prepared.iter().enumerate() {
+            let Some(recognized) = &recognized[index] else {
+                continue;
+            };
             let text = recognized.text.trim();
-            // Drop boxes the recognizer reads as empty.
             if !text.is_empty() {
                 blocks.push(OcrBlock {
                     text: text.to_owned(),

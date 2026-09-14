@@ -21,13 +21,13 @@ akuna-core = { path = "src-crates/core" }
 # core foundational deps
 anyhow = "1.0.102"
 thiserror = "2.0.18"
-# App, core, and bindings need Tokio's runtime, macros, filesystem, and sync APIs.
 tokio = { version = "1.52.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 utoipa = "5.5.0"
+ignore = "0.4.33"
 
 # ML infra
 tokenizers = "0.22.2"
@@ -39,6 +39,9 @@ burn-dispatch = { version = "0.21.0", default-features = false, features = ["web
 burn-store = { version = "0.21.0", default-features = false, features = ["std", "safetensors", "pytorch"] }
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "ureq", "rustls-tls"] }
 image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "webp"] }
+# Pure-Rust HEIC/HEIF decoder (the `image` crate has no HEIC support); only
+# permissive-FOSS option without C bindings.
+heif-oxide = "0.1.0"
 wgpu = "29"
 pollster = "0.4"
 
@@ -66,3 +69,10 @@ codegen-units = 1
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# Optimized local measurements without release's expensive whole-program link.
+[profile.perf]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

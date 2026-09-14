@@ -1,44 +1,32 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
-
 use anyhow::Result;
-use hf_hub::{Repo, RepoType};
 
-const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
-const HF_REPO_TEST_CORPUS_REVISION: &str =
-    "628188f924994038784e21e828518441634948ba";
-const HF_REPO_CONTENT_PREFIX: &str = "content/fixtures";
-static CORPUS_FIXTURES: OnceLock<Mutex<HashMap<String, PathBuf>>> =
-    OnceLock::new();
+#[cfg(any(feature = "extraction", feature = "ocr"))]
+pub(crate) use corpus::corpus_fixture;
 
-/// Returns a named fixture from the pinned test corpus revision.
-pub(crate) fn corpus_fixture(name: &str) -> Result<PathBuf> {
-    let cache = CORPUS_FIXTURES.get_or_init(Default::default);
-    let cached = {
-        let cache = cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
-        cache.get(name).cloned()
-    };
-    if let Some(path) = cached {
-        return Ok(path);
+#[cfg(any(feature = "extraction", feature = "ocr"))]
+mod corpus {
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+    use hf_hub::{Repo, RepoType};
+
+    const HF_REPO_TEST_CORPUS: &str = "akunasoftware/test-corpus";
+    const HF_REPO_TEST_CORPUS_REVISION: &str =
+        "2c8f0c235151a8a241ef4568b1ecab6c95fbb3f1";
+    const HF_REPO_CONTENT_PREFIX: &str = "content/fixtures";
+
+    /// Returns a named fixture from the pinned test corpus revision.
+    pub(crate) fn corpus_fixture(name: &str) -> Result<PathBuf> {
+        let client = hf_hub::api::sync::ApiBuilder::new()
+            .with_progress(false)
+            .build()?;
+        let repo = client.repo(Repo::with_revision(
+            HF_REPO_TEST_CORPUS.to_string(),
+            RepoType::Dataset,
+            HF_REPO_TEST_CORPUS_REVISION.to_string(),
+        ));
+        Ok(repo.get(&format!("{HF_REPO_CONTENT_PREFIX}/{name}"))?)
     }
-
-    let client = hf_hub::api::sync::ApiBuilder::new()
-        .with_progress(false)
-        .build()?;
-    let repo = client.repo(Repo::with_revision(
-        HF_REPO_TEST_CORPUS.to_string(),
-        RepoType::Dataset,
-        HF_REPO_TEST_CORPUS_REVISION.to_string(),
-    ));
-    let path = repo.download(&format!("{HF_REPO_CONTENT_PREFIX}/{name}"))?;
-    let mut cache = cache
-        .lock()
-        .map_err(|_| anyhow::anyhow!("corpus fixture cache poisoned"))?;
-    cache.insert(name.to_string(), path.clone());
-    Ok(path)
 }
 
 /// Runs model-heavy tests on a larger stack.

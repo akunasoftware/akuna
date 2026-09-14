@@ -1995,7 +1995,7 @@ pub(crate) static ZLIBSTREAM: TypeInfo = TypeInfo {
 };
 
 /// Content types for regular files.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ContentType {
     /// 3GPP multimedia file

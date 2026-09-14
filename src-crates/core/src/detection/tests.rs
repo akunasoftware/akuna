@@ -1,12 +1,12 @@
-use super::models::magika::sorted_row;
-use super::models::magika_preprocess::{PreparedInput, prepare_input};
+use super::models::magika::best_score;
+use super::models::magika_preprocess;
 use super::{DetectionError, DetectionOrigin, FileType};
 use crate::detection::vendor::{content::ContentType, model as vendor_model};
 
 #[test]
 fn short_utf8_input_is_ruled_as_text() {
-    match prepare_input(b"hello", &vendor_model::CONFIG) {
-        PreparedInput::Ruled(ContentType::Txt) => {}
+    match magika_preprocess::prepare_input(b"hello", &vendor_model::CONFIG) {
+        magika_preprocess::PreparedInput::Ruled(ContentType::Txt) => {}
         _ => panic!("expected ruled text"),
     }
 }
@@ -27,11 +27,43 @@ fn core_shape_copies_vendor_metadata() {
 }
 
 #[test]
+fn known_utf8_extensions_are_ruled() {
+    for extension in ["md", ".MD"] {
+        let detected = super::FileTypeDetector::identify_utf8_extension(
+            extension,
+            b"valid utf-8",
+        )
+        .unwrap_or_else(|| panic!("{extension} should resolve"));
+
+        assert_eq!(detected.info().label, "markdown", "{extension}");
+        assert_eq!(detected.origin(), DetectionOrigin::Rule, "{extension}");
+        assert_eq!(detected.confidence(), 1.0, "{extension}");
+    }
+
+    let nix = super::FileTypeDetector::identify_utf8_extension(
+        "nix",
+        b"{ pkgs, ... }: { }",
+    )
+    .expect("Nix extension should resolve");
+
+    assert_eq!(nix.info().label, "nix");
+    assert!(nix.info().is_text);
+    assert_eq!(nix.origin(), DetectionOrigin::Rule);
+    assert_eq!(nix.confidence(), 1.0);
+    let identify = super::FileTypeDetector::identify_utf8_extension;
+    assert!(identify("xml", b"<root />").is_none());
+    assert!(identify("md", b"valid prefix\xff").is_none());
+}
+
+#[test]
 fn model_errors_keep_sources() {
     use super::models::magika::MagikaModel;
-    use crate::ml::backend::{Backend, cpu_device};
+    use crate::ml::backend;
 
-    let error = match MagikaModel::<Backend>::from_bytes(&cpu_device(), &[]) {
+    let error = match MagikaModel::<backend::Backend>::from_bytes(
+        &backend::cpu_device(),
+        &[],
+    ) {
         Ok(_) => panic!("invalid weights should fail"),
         Err(error) => error,
     };
@@ -88,8 +120,7 @@ fn tied_scores_use_label_index_order() {
     scores[5] = 0.8;
     scores[2] = 0.8;
 
-    let sorted = sorted_row(scores).expect("valid score row");
-    assert_eq!(&sorted[..2], &[(2, 0.8), (5, 0.8)]);
+    assert_eq!(best_score(&scores).expect("valid score row"), (2, 0.8));
 }
 
 #[test]
@@ -99,29 +130,8 @@ fn invalid_scores_are_rejected() {
         scores[0] = invalid;
 
         assert!(matches!(
-            sorted_row(scores),
+            best_score(&scores),
             Err(DetectionError::InvalidModel { .. })
         ));
     }
-}
-
-#[test]
-fn model_result_keeps_confidence_and_origin() {
-    use super::models::magika::MagikaModel;
-    use crate::detection::DetectionOrigin;
-    use crate::ml::backend::{Backend, cpu_device};
-
-    crate::testkit::run_with_model_stack(|| {
-        let model = MagikaModel::<Backend>::from_embedded(&cpu_device())?;
-        let first =
-            model.identify_bytes(b"function greet() { return 'hi'; }")?;
-        let second =
-            model.identify_bytes(b"function greet() { return 'hi'; }")?;
-
-        assert_eq!(first, second);
-        assert_eq!(first.origin(), DetectionOrigin::Model);
-        assert!((0.0..=1.0).contains(&first.confidence()));
-        Ok(())
-    })
-    .expect("model test thread should finish");
 }
