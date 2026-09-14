@@ -1,9 +1,15 @@
+use std::future::{Future, poll_fn};
 use std::path::PathBuf;
+use std::task::Poll;
 
-use super::{
-    DetectionOrigin, ExtractionConfig, ExtractionMetadata,
-    ExtractionPipelineStepKind, FileExtractionError, PartKind, extract_bytes,
-    extract_file,
+use tokio::fs::File;
+use tokio::io::duplex;
+
+use crate::extraction::document::temporary_content_file;
+use crate::extraction::{
+    DetectionOrigin, DocumentContent, ExtractionConfig, ExtractionMetadata,
+    ExtractionPart, ExtractionPipelineStepKind, FileExtractionError, PartKind,
+    extract_bytes, extract_file,
 };
 
 /// Fetches an extraction fixture from the shared corpus.
@@ -107,6 +113,61 @@ fn test_metadata(mime_type: &str) -> ExtractionMetadata {
     }
 }
 
+#[tokio::test]
+async fn cleans_temporary_file_after_success() -> Result<(), FileExtractionError>
+{
+    let bytes = b"temporary content";
+    let temporary_file =
+        temporary_content_file(bytes, None, &test_metadata("application/pdf"))
+            .await?;
+    let path = temporary_file.path.clone();
+
+    assert_eq!(
+        path.extension().and_then(|value| value.to_str()),
+        Some("pdf")
+    );
+    assert_eq!(std::fs::read(&path)?, bytes);
+    drop(temporary_file);
+    assert!(!path.try_exists()?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cleans_temporary_file_after_write_failure()
+-> Result<(), FileExtractionError> {
+    let temporary_file =
+        temporary_content_file(b"", None, &test_metadata("application/pdf"))
+            .await?;
+    let path = temporary_file.path.clone();
+    let file = File::from_std(std::fs::File::open(&path)?);
+
+    let result = temporary_file.write(file, b"cannot write").await;
+
+    assert!(matches!(result, Err(FileExtractionError::Io { .. })));
+    assert!(!path.try_exists()?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cleans_temporary_file_after_write_cancellation()
+-> Result<(), FileExtractionError> {
+    let temporary_file =
+        temporary_content_file(b"", None, &test_metadata("application/pdf"))
+            .await?;
+    let path = temporary_file.path.clone();
+    // A live, unread peer forces the second byte to remain pending.
+    let (writer, _reader) = duplex(1);
+    let mut writing = Box::pin(temporary_file.write(writer, b"ab"));
+
+    assert!(
+        poll_fn(|cx| Poll::Ready(writing.as_mut().poll(cx).is_pending())).await
+    );
+    assert!(path.try_exists()?);
+    drop(writing);
+    assert!(!path.try_exists()?);
+    Ok(())
+}
+
 // Supported document formats
 extract_from_files!(SAMPLE_TEXT;
     supported_doc => "text.doc",
@@ -203,8 +264,8 @@ async fn extracts_bytes_without_path_metadata()
         .find(|step| step.engine == "direct")
         .expect("direct parser should be audited");
     assert_eq!(direct.step, ExtractionPipelineStepKind::Parsing);
-    assert!(direct.outputs.contains_key("parts"));
-    assert!(direct.outputs.contains_key("texts"));
+    assert_eq!(direct.outputs.get("parts"), Some(&1));
+    assert_eq!(direct.outputs.get("texts"), Some(&1));
 
     Ok(())
 }
@@ -321,26 +382,63 @@ async fn extracts_metadata_without_text() -> Result<(), FileExtractionError> {
 }
 
 #[tokio::test]
-async fn returns_top_level_parts_without_text()
--> Result<(), FileExtractionError> {
+async fn respects_output_flags() -> Result<(), FileExtractionError> {
     let file_path = get_extraction_fixture("text.txt");
-    let extraction = extract_file(
-        &file_path,
-        &ExtractionConfig {
-            return_parts: true,
-            ..Default::default()
-        },
-    )
-    .await?;
-    let parts = extraction.parts.expect("file should return parts");
+    for (return_metadata, return_content, return_parts) in [
+        (false, false, false),
+        (false, false, true),
+        (false, true, false),
+        (false, true, true),
+        (true, false, false),
+        (true, false, true),
+        (true, true, false),
+        (true, true, true),
+    ] {
+        let extraction = extract_file(
+            &file_path,
+            &ExtractionConfig {
+                return_metadata,
+                return_content,
+                return_parts,
+                ..Default::default()
+            },
+        )
+        .await?;
 
-    assert!(extraction.text.is_none());
-    assert!(!parts.is_empty());
-    assert!(parts.iter().any(|part| {
-        part.text
-            .as_deref()
-            .is_some_and(|text| text.contains(SAMPLE_TEXT))
-    }));
+        assert_eq!(extraction.metadata.is_some(), return_metadata);
+        assert_eq!(extraction.text.is_some(), return_content);
+        assert_eq!(extraction.parts.is_some(), return_parts);
+        if let Some(text) = extraction.text {
+            assert!(text.contains(SAMPLE_TEXT));
+        }
+        if let Some(parts) = extraction.parts {
+            assert!(!parts.is_empty());
+            assert!(parts.iter().any(|part| {
+                part.text
+                    .as_deref()
+                    .is_some_and(|text| text.contains(SAMPLE_TEXT))
+            }));
+        }
+
+        let expected_pipeline = if return_content || return_parts {
+            vec![
+                (ExtractionPipelineStepKind::Detection, "magika"),
+                (ExtractionPipelineStepKind::Parsing, "direct"),
+            ]
+        } else if return_metadata {
+            vec![(ExtractionPipelineStepKind::Detection, "magika")]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            extraction
+                .pipeline
+                .iter()
+                .map(|step| (step.step, step.engine.as_str()))
+                .collect::<Vec<_>>(),
+            expected_pipeline
+        );
+    }
 
     Ok(())
 }
@@ -384,6 +482,51 @@ fn preserves_plain_text_as_one_part() {
 }
 
 #[test]
+fn resolves_document_text() {
+    for (canonical_text, parts, expected) in [
+        (None, &[] as &[Option<&str>], None),
+        (Some("canonical"), &[Some("part")], Some("canonical")),
+        (Some(""), &[], Some("")),
+        (Some(""), &[Some("part")], Some("")),
+        (None, &[None, None], None),
+        (None, &[Some("")], None),
+        (None, &[None, Some(""), None], None),
+        (None, &[Some(""), None, Some("")], Some("\n\n")),
+        (None, &[Some(""), Some(""), Some("")], Some("\n\n\n\n")),
+        (None, &[Some(" ")], Some(" ")),
+        (None, &[None, Some("text"), None], Some("text")),
+        (
+            None,
+            &[Some(""), Some("text"), Some("")],
+            Some("\n\ntext\n\n"),
+        ),
+        (
+            None,
+            &[Some("first"), Some("second")],
+            Some("first\n\nsecond"),
+        ),
+    ] {
+        let content = DocumentContent {
+            canonical_text: canonical_text.map(str::to_owned),
+            parts: parts
+                .iter()
+                .enumerate()
+                .map(|(index, text)| ExtractionPart {
+                    index,
+                    kind: PartKind::Text,
+                    text: text.map(str::to_owned),
+                    provenance: None,
+                })
+                .collect(),
+            pipeline: Vec::new(),
+        };
+        let text = content.text();
+
+        assert_eq!(text.as_deref(), expected);
+    }
+}
+
+#[test]
 fn detection_io_errors_remain_io() {
     let error =
         FileExtractionError::from(crate::detection::DetectionError::Io {
@@ -408,25 +551,60 @@ fn extracts_png_with_ocr() {
             tokio::runtime::Runtime::new().expect("tokio runtime should start");
         runtime.block_on(async {
             let file_path = get_extraction_fixture("text-hidpi.png");
-            let extraction = extract_file(
-                &file_path,
-                &ExtractionConfig {
-                    return_content: true,
-                    return_parts: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .expect("OCR extraction should succeed");
+            let config = ExtractionConfig {
+                return_content: true,
+                return_parts: true,
+                ..Default::default()
+            };
+            let extraction = extract_file(&file_path, &config)
+                .await
+                .expect("OCR extraction should succeed");
 
-            assert!(
-                extraction
-                    .text
-                    .is_some_and(|text| text.contains("On Looking Inward"))
-            );
+            let text = extraction.text.expect("OCR should return text");
+            assert!(text.contains("On Looking Inward"));
             let parts = extraction.parts.expect("OCR should return parts");
             assert!(parts.len() > 1);
-            assert!(parts.iter().all(|part| part.kind == PartKind::Text));
+            for (index, part) in parts.iter().enumerate() {
+                assert_eq!(part.index, index);
+                assert_eq!(part.kind, PartKind::Text);
+                let provenance = part
+                    .provenance
+                    .as_ref()
+                    .expect("OCR part should have provenance");
+                assert!(provenance.bbox.is_some());
+                assert!(provenance.confidence.is_some());
+                assert_eq!(provenance.page, None);
+            }
+            assert_eq!(
+                text,
+                parts
+                    .iter()
+                    .map(|part| part
+                        .text
+                        .as_deref()
+                        .expect("OCR part has text"))
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            );
+            let recognition_engine = config.ocr.recognition_model.to_string();
+            assert_eq!(
+                extraction
+                    .pipeline
+                    .iter()
+                    .map(|step| (step.step, step.engine.as_str()))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (ExtractionPipelineStepKind::Detection, "magika"),
+                    (
+                        ExtractionPipelineStepKind::Recognition,
+                        recognition_engine.as_str(),
+                    ),
+                ]
+            );
+            assert_eq!(
+                extraction.pipeline[1].outputs.get("texts"),
+                Some(&(parts.len() as u64))
+            );
         });
 
         Ok(())

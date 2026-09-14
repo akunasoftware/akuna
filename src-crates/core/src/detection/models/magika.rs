@@ -150,11 +150,12 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
                 &LAYER_NORM_0_BIAS,
                 [1, TOKENS_PER_BLOCK, 1],
             )?,
-            conv_weight: tensor_3d_from_flat(
+            conv_weight: tensor_3d(
                 device,
-                read_conv_weight(&initializers)?,
+                &initializers,
+                &CONV_WEIGHT,
                 [CONV_OUT_CHANNELS, CHANNELS_PER_TOKEN, CONV_KERNEL],
-            ),
+            )?,
             conv_bias: tensor_1d_from_flat(
                 device,
                 read_tensor_spec(&initializers, &CONV_BIAS)?,
@@ -272,12 +273,9 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         batch_features: &[Vec<i32>],
     ) -> Result<Tensor<B, 2>, DetectionError> {
         let batch_size = batch_features.len();
-        let flat = batch_features
-            .iter()
-            .flat_map(|features| features.iter().map(|value| *value as f32))
-            .collect::<Vec<_>>();
+        let feature_count = batch_features.iter().map(Vec::len).sum::<usize>();
 
-        if flat.len() != batch_size * SEQ_LEN {
+        if feature_count != batch_size * SEQ_LEN {
             return Err(DetectionError::InvalidModel {
                 message: "unexpected feature batch shape".to_owned(),
             });
@@ -414,35 +412,6 @@ fn tensor_1d_from_flat<B: Backend<FloatElem = f32>>(
 ) -> Tensor<B, 1> {
     let len = values.len();
     Tensor::<B, 1>::from_data(TensorData::new(values, [len]), device)
-}
-
-fn read_conv_weight(
-    initializers: &SafeTensors<'_>,
-) -> Result<Vec<f32>, DetectionError> {
-    let raw = read_tensor_spec(initializers, &CONV_WEIGHT)?;
-    let mut flattened = Vec::with_capacity(
-        CONV_OUT_CHANNELS * CHANNELS_PER_TOKEN * CONV_KERNEL,
-    );
-
-    for out in 0..CONV_OUT_CHANNELS {
-        for channel in 0..CHANNELS_PER_TOKEN {
-            for kernel in 0..CONV_KERNEL {
-                let index =
-                    (out * CHANNELS_PER_TOKEN + channel) * CONV_KERNEL + kernel;
-                flattened.push(raw[index]);
-            }
-        }
-    }
-
-    Ok(flattened)
-}
-
-fn tensor_3d_from_flat<B: Backend<FloatElem = f32>>(
-    device: &B::Device,
-    values: Vec<f32>,
-    shape: [usize; 3],
-) -> Tensor<B, 3> {
-    Tensor::<B, 3>::from_data(TensorData::new(values, shape), device)
 }
 
 fn tensor_3d<B: Backend<FloatElem = f32>>(

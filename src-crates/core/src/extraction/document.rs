@@ -1,9 +1,13 @@
 //! Document extraction entry points.
 
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use tokio::io::AsyncWriteExt;
+use tokio::fs::File;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::extraction::{
     DocumentContent, ExtractionConfig, ExtractionMetadata,
@@ -45,7 +49,7 @@ async fn from_bytes_with_source_path(
     let need_content = config.return_content || config.return_parts;
 
     let (metadata, mut pipeline) = if need_metadata {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let metadata = metadata::from_bytes(bytes, source_path)?;
         let duration_ms = started.elapsed().as_millis() as u64;
         let step = pipeline::step(
@@ -66,20 +70,18 @@ async fn from_bytes_with_source_path(
             None
         };
 
-    let text = content.as_ref().and_then(DocumentContent::text);
-    let parts = content
-        .as_ref()
-        .and_then(|content| config.return_parts.then(|| content.parts.clone()));
-    let returned_text = config.return_content.then_some(text).flatten();
+    let (returned_text, parts) = if let Some(content) = content {
+        let text = config.return_content.then(|| content.text()).flatten();
+        pipeline.extend(content.pipeline);
+        (text, config.return_parts.then_some(content.parts))
+    } else {
+        (None, None)
+    };
     let returned_metadata = if config.return_metadata {
         metadata
     } else {
         None
     };
-    if let Some(content) = content.as_ref() {
-        pipeline.extend(content.pipeline.clone());
-    }
-
     Ok(ExtractionResult {
         metadata: returned_metadata,
         pipeline,
@@ -95,14 +97,13 @@ async fn extract_content(
     metadata: &ExtractionMetadata,
     _config: &ExtractionConfig,
 ) -> Result<DocumentContent, FileExtractionError> {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let (mut content, engine) = match metadata.mime_type.as_str() {
         // PDF documents use structural page extraction.
         "application/pdf" => {
-            let file_path =
+            let temporary_file =
                 temporary_content_file(bytes, source_path, metadata).await?;
-            let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            return extractors::pdf::extract(&file_path);
+            return extractors::pdf::extract_file(&temporary_file.path);
         }
 
         // Office documents use document-level structural extraction.
@@ -110,19 +111,17 @@ async fn extract_content(
         | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" =>
         {
-            let file_path =
+            let temporary_file =
                 temporary_content_file(bytes, source_path, metadata).await?;
-            let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            return extractors::office::extract(&file_path);
+            return extractors::office::extract_file(&temporary_file.path);
         }
 
         // EPUB needs chapter rendering before text normalization.
         "application/epub+zip" => {
-            let file_path =
+            let temporary_file =
                 temporary_content_file(bytes, source_path, metadata).await?;
-            let _cleanup = TemporaryFileCleanup::new(file_path.clone());
             (
-                extractors::text::extract_epub(&file_path)
+                extractors::text::extract_epub_file(&temporary_file.path)
                     .map(DocumentContent::from_text)?,
                 "rbook-epub",
             )
@@ -154,10 +153,7 @@ async fn extract_content(
         // Images use OCR when the feature is enabled.
         #[cfg(feature = "ocr")]
         "image/bmp" | "image/jpeg" | "image/png" | "image/tiff" => {
-            let file_path =
-                temporary_content_file(bytes, source_path, metadata).await?;
-            let _cleanup = TemporaryFileCleanup::new(file_path.clone());
-            return extractors::ocr::extract(&file_path, &_config.ocr).await;
+            return extractors::ocr::extract_bytes(bytes, &_config.ocr).await;
         }
 
         // Remaining detected text goes through generic parser fallback.
@@ -186,48 +182,60 @@ async fn extract_content(
 }
 
 // Some extractors require a path.
-async fn temporary_content_file(
+pub(super) async fn temporary_content_file(
     bytes: &[u8],
     source_path: Option<&Path>,
     metadata: &ExtractionMetadata,
-) -> Result<PathBuf, FileExtractionError> {
+) -> Result<TemporaryFileCleanup, FileExtractionError> {
     for attempt in 0..100_u8 {
         let file_path = temporary_content_path(source_path, metadata, attempt);
-        let file = tokio::fs::OpenOptions::new()
+        // Async open could create a file after cancellation, before guarding it.
+        let file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&file_path)
-            .await;
-        let mut file = match file {
+            .open(&file_path);
+        let file = match file {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
                 continue;
             }
             Err(error) => return Err(error.into()),
         };
 
-        file.write_all(bytes).await?;
-        file.flush().await?;
-        return Ok(file_path);
+        let cleanup = TemporaryFileCleanup::new(file_path);
+        return cleanup.write(File::from_std(file), bytes).await;
     }
 
     Err(FileExtractionError::Io {
-        source: std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
+        source: Error::new(
+            ErrorKind::AlreadyExists,
             "could not create temporary extraction file",
         ),
     })
 }
 
 // Removes temporary files when path-backed extraction finishes.
-struct TemporaryFileCleanup {
-    path: PathBuf,
+pub(super) struct TemporaryFileCleanup {
+    pub(super) path: PathBuf,
 }
 
 impl TemporaryFileCleanup {
     // Track temporary file for cleanup at scope exit.
     fn new(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    pub(super) async fn write(
+        self,
+        file: impl AsyncWrite + Unpin,
+        bytes: &[u8],
+    ) -> Result<Self, FileExtractionError> {
+        // Drop the writer before the guard on errors and cancellation, too.
+        let mut file = file;
+        file.write_all(bytes).await?;
+        file.flush().await?;
+        drop(file);
+        Ok(self)
     }
 }
 
@@ -276,18 +284,14 @@ fn extension_from_mime(mime_type: &str) -> Option<&'static str> {
             Some("docx")
         }
         "application/epub+zip" => Some("epub"),
-        "image/bmp" => Some("bmp"),
-        "image/jpeg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/tiff" => Some("tiff"),
         _ => None,
     }
 }
 
 // Best-effort unique suffix for temporary file names.
 fn unique_suffix() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default()
 }
@@ -296,7 +300,7 @@ fn unique_suffix() -> u128 {
 fn validate_path(file_path: &Path) -> Result<(), FileExtractionError> {
     if !file_path.exists() {
         return Err(FileExtractionError::Io {
-            source: std::io::Error::other(format!(
+            source: Error::other(format!(
                 "Given path does not exist: {}",
                 file_path.to_string_lossy()
             )),
@@ -305,7 +309,7 @@ fn validate_path(file_path: &Path) -> Result<(), FileExtractionError> {
 
     if !file_path.is_file() {
         return Err(FileExtractionError::Io {
-            source: std::io::Error::other(format!(
+            source: Error::other(format!(
                 "Given path is not a file: {}",
                 file_path.to_string_lossy()
             )),

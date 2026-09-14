@@ -1,24 +1,25 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::time::Instant;
 
 use crate::extraction::{
     DocumentContent, ExtractionBbox, ExtractionPart, ExtractionPipelineStep,
     ExtractionPipelineStepKind, FileExtractionError, PartKind, pipeline,
     provenance,
 };
+use crate::ocr::{OcrEngine, OcrEngineOptions, OcrError, OcrPage};
 
-/// Extract OCR parts from image files.
-pub(in crate::extraction) async fn extract(
-    file_path: &Path,
-    ocr_options: &crate::ocr::OcrEngineOptions,
+/// Extract OCR parts from encoded image bytes.
+pub(in crate::extraction) async fn extract_bytes(
+    bytes: &[u8],
+    ocr_options: &OcrEngineOptions,
 ) -> Result<DocumentContent, FileExtractionError> {
-    let ocr = crate::ocr::OcrEngine::new(ocr_options.clone())
+    let ocr = OcrEngine::new(ocr_options.clone())
         .await
         .map_err(ocr_extraction_error)?;
     let pipeline_config = ocr.pipeline();
 
-    let started = std::time::Instant::now();
-    let page = ocr.extract_file(file_path).map_err(ocr_extraction_error)?;
+    let started = Instant::now();
+    let page = ocr.extract_bytes(bytes).map_err(ocr_extraction_error)?;
     let duration_ms = started.elapsed().as_millis() as u64;
 
     let block_count = page.blocks.len();
@@ -34,7 +35,7 @@ pub(in crate::extraction) async fn extract(
 
 /// Build extraction parts from OCR page output.
 fn from_ocr_page(
-    page: &crate::ocr::OcrPage,
+    page: &OcrPage,
     pipeline: Vec<ExtractionPipelineStep>,
 ) -> DocumentContent {
     let parts = page
@@ -70,7 +71,7 @@ fn from_ocr_page(
 }
 
 /// Map OCR errors into extraction engine errors.
-fn ocr_extraction_error(source: crate::ocr::OcrError) -> FileExtractionError {
+fn ocr_extraction_error(source: OcrError) -> FileExtractionError {
     FileExtractionError::ExtractionEngine {
         engine: "ocr",
         source: Box::new(source),

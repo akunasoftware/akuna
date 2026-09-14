@@ -1,15 +1,17 @@
 use std::path::Path;
 
+use quick_xml::Error;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
+use rbook::Epub;
 
 use crate::extraction::{ExtractionMetadata, FileExtractionError};
 
 /// Extract EPUB content by rendering each chapter to plain text.
-pub(in crate::extraction) fn extract_epub(
+pub(in crate::extraction) fn extract_epub_file(
     file_path: &Path,
 ) -> Result<String, FileExtractionError> {
-    let doc = rbook::Epub::open(file_path)?;
+    let doc = Epub::open(file_path)?;
 
     let mut text = String::new();
     for data_result in doc.reader() {
@@ -59,7 +61,7 @@ fn is_markup(mime_type: &str) -> bool {
 }
 
 /// Converts tag-based markup to normalized visible text.
-fn plain_text_from_markup(markup: &str) -> quick_xml::Result<String> {
+fn plain_text_from_markup(markup: &str) -> Result<String, Error> {
     let mut text = String::with_capacity(markup.len());
     let mut last_was_whitespace = true;
     let mut remaining = markup;
@@ -188,10 +190,7 @@ fn push_space(text: &mut String, last_was_whitespace: &mut bool) {
 }
 
 /// Converts parser failures at the extraction boundary.
-fn markup_error(
-    engine: &'static str,
-    source: quick_xml::Error,
-) -> FileExtractionError {
+fn markup_error(engine: &'static str, source: Error) -> FileExtractionError {
     FileExtractionError::ExtractionEngine {
         engine,
         source: Box::new(source),

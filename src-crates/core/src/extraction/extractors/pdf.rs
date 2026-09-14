@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Instant;
+
+use pdf_oxide::PdfDocument;
+use pdf_oxide::extractors::{DocumentElement, StructuredExtractor};
 
 use crate::extraction::{
-    DocumentContent, ExtractionBbox, ExtractionPart, FileExtractionError,
-    PartKind, pipeline, provenance,
+    DocumentContent, ExtractionBbox, ExtractionPart,
+    ExtractionPipelineStepKind, FileExtractionError, PartKind, pipeline,
+    provenance,
 };
 
 #[derive(Clone)]
@@ -36,13 +41,11 @@ impl PdfPart {
 }
 
 /// Extract structured text and parts from PDF documents.
-pub(in crate::extraction) fn extract(
+pub(in crate::extraction) fn extract_file(
     file_path: &Path,
 ) -> Result<DocumentContent, FileExtractionError> {
-    use pdf_oxide::extractors::{DocumentElement, StructuredExtractor};
-
-    let started = std::time::Instant::now();
-    let mut document = pdf_oxide::PdfDocument::open(file_path)?;
+    let started = Instant::now();
+    let mut document = PdfDocument::open(file_path)?;
     let page_count = document.page_count()?;
     let mut extractor = StructuredExtractor::new();
     let mut parts = Vec::new();
@@ -103,7 +106,7 @@ pub(in crate::extraction) fn extract(
         }
     };
     let audit = pipeline::step(
-        crate::extraction::ExtractionPipelineStepKind::Parsing,
+        ExtractionPipelineStepKind::Parsing,
         "pdf_oxide",
         started.elapsed().as_millis() as u64,
         BTreeMap::from([
