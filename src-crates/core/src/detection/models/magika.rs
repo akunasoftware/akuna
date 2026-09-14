@@ -1,14 +1,22 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use burn::tensor::{
     Tensor, TensorData, activation::softmax, backend::Backend, module::conv1d,
     ops::ConvOptions,
 };
+use burn_dispatch::DispatchDevice;
 use safetensors::{Dtype, SafeTensors};
 
 use crate::detection::{
     DetectionError, FileType,
     models::magika_preprocess::{PreparedInput, prepare_input},
-    vendor::{content::ContentType, model as vendor_model},
+    vendor::{content::ContentType, file::TypeInfo, model as vendor_model},
 };
+use crate::ml::safe_matmul;
+
+#[cfg(test)]
+mod tests;
 
 const NUM_CLASSES: usize = 257;
 const SEQ_LEN: usize = 2048;
@@ -23,6 +31,41 @@ const DENSE_OUT: usize = vendor_model::NUM_LABELS;
 // safetensors is never committed and nothing is fetched at build or runtime.
 const EMBEDDED_MODEL: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/magika.safetensors"));
+
+// File types missing from the bundled Magika model, reported by it as the
+// map key. The corrected metadata replaces the reported type before results
+// leave the model.
+static MISDETECTIONS: LazyLock<HashMap<ContentType, &TypeInfo>> =
+    LazyLock::new(|| {
+        HashMap::from([(
+            // HEIC shares the ISO-BMFF container with MP4, so Magika reports
+            // `mp4` for HEIC photos.
+            ContentType::Mp4,
+            &TypeInfo {
+                label: "heic",
+                mime_type: "image/heic",
+                group: "image",
+                description: "High Efficiency Image File Format",
+                extensions: &["heic", "heif"],
+                is_text: false,
+            },
+        )])
+    });
+
+/// Returns the corrected metadata for a known Magika misdetection.
+///
+/// ISO-BMFF is a shared container, so the override only applies when the
+/// bytes carry a HEIF brand and genuine MP4 files stay untouched.
+fn misdetection_override(
+    content_type: ContentType,
+    bytes: &[u8],
+) -> Option<&'static TypeInfo> {
+    let info = MISDETECTIONS.get(&content_type).copied()?;
+    if !crate::heif::has_heif_brand(bytes) {
+        return None;
+    }
+    Some(info)
+}
 
 struct TensorSpec {
     name: &'static str,
@@ -93,8 +136,7 @@ const DENSE_BIAS: TensorSpec = TensorSpec {
 /// The Magika file-type classifier.
 pub struct MagikaModel<B: Backend> {
     device: B::Device,
-    embedding_weight: Vec<f32>,
-    embedding_bias: Vec<f32>,
+    embedding_table: Vec<f32>,
     layer_norm_0_weight: Tensor<B, 3>,
     layer_norm_0_bias: Tensor<B, 3>,
     conv_weight: Tensor<B, 3>,
@@ -105,14 +147,13 @@ pub struct MagikaModel<B: Backend> {
     dense_bias: Tensor<B, 2>,
 }
 
-/// Per-input classification result: either a rule-resolved type or a scored
-/// list of `(label_idx, score)` pairs.
+/// Per-input classification result.
 enum RowOutcome {
     Ruled(ContentType),
-    Scored(Vec<(usize, f32)>),
+    Scored(usize, f32),
 }
 
-impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
+impl<B: Backend<FloatElem = f32, Device = DispatchDevice>> MagikaModel<B> {
     /// Loads the model from its bundled weights.
     pub fn from_embedded(device: &B::Device) -> Result<Self, DetectionError> {
         Self::from_bytes(device, EMBEDDED_MODEL)
@@ -131,13 +172,31 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
                 }
             })?;
 
+        let embedding_weight =
+            read_tensor_spec(&initializers, &EMBEDDING_WEIGHT)?;
+        let embedding_bias = read_tensor_spec(&initializers, &EMBEDDING_BIAS)?;
+        // Preserve host bias addition and backend GELU, once per token at load.
+        let embedding_table = gelu(tensor_2d_from_flat::<B>(
+            device,
+            embedding_weight
+                .into_iter()
+                .enumerate()
+                .map(|(index, weight)| {
+                    weight + embedding_bias[index % EMBED_DIM]
+                })
+                .collect(),
+            [NUM_CLASSES, EMBED_DIM],
+        ))
+        .into_data()
+        .to_vec::<f32>()
+        .map_err(|source| DetectionError::Model {
+            operation: "read embedding table",
+            source: Box::new(source),
+        })?;
+
         Ok(Self {
             device: (*device).clone(),
-            embedding_weight: read_tensor_spec(
-                &initializers,
-                &EMBEDDING_WEIGHT,
-            )?,
-            embedding_bias: read_tensor_spec(&initializers, &EMBEDDING_BIAS)?,
+            embedding_table,
             layer_norm_0_weight: tensor_3d(
                 device,
                 &initializers,
@@ -196,23 +255,23 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         &self,
         inputs: Vec<&[u8]>,
     ) -> Result<Vec<FileType>, DetectionError> {
-        self.classify(inputs)?
+        self.classify(inputs.clone())?
             .into_iter()
-            .map(|outcome| match outcome {
+            .zip(inputs)
+            .map(|(outcome, bytes)| match outcome {
                 RowOutcome::Ruled(content_type) => {
-                    Ok(FileType::ruled(content_type))
+                    Ok(match misdetection_override(content_type, bytes) {
+                        Some(info) => FileType::ruled_info(info),
+                        None => FileType::ruled(content_type),
+                    })
                 }
-                RowOutcome::Scored(sorted) => {
-                    let (label_idx, score) = sorted
-                        .first()
-                        .copied()
-                        .ok_or_else(|| DetectionError::InvalidModel {
-                            message: "no alternatives created".to_owned(),
-                        })?;
-                    Ok(FileType::inferred(
-                        self.final_content_type(label_idx, score)?,
-                        score,
-                    ))
+                RowOutcome::Scored(label_idx, score) => {
+                    let content_type =
+                        self.final_content_type(label_idx, score)?;
+                    Ok(match misdetection_override(content_type, bytes) {
+                        Some(info) => FileType::ruled_info(info),
+                        None => FileType::inferred(content_type, score),
+                    })
                 }
             })
             .collect()
@@ -245,16 +304,27 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         }
 
         if !pending_features.is_empty() {
-            let rows = self.infer_rows(&pending_features)?;
-            if rows.len() != pending_positions.len() {
+            let scores = self
+                .forward(&pending_features)?
+                .into_data()
+                .to_vec::<f32>()
+                .map_err(|source| DetectionError::Model {
+                    operation: "read tensor output",
+                    source: Box::new(source),
+                })?;
+            if scores.len() != pending_positions.len() * DENSE_OUT {
                 return Err(DetectionError::InvalidModel {
                     message: "runtime returned mismatched batch size"
                         .to_owned(),
                 });
             }
 
-            for (position, row) in pending_positions.into_iter().zip(rows) {
-                outcomes[position] = Some(RowOutcome::Scored(sorted_row(row)?));
+            for (position, row) in pending_positions
+                .into_iter()
+                .zip(scores.chunks_exact(DENSE_OUT))
+            {
+                let (label_idx, score) = best_score(row)?;
+                outcomes[position] = Some(RowOutcome::Scored(label_idx, score));
             }
         }
 
@@ -298,12 +368,9 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
                 }
 
                 let start = index * EMBED_DIM;
-                for offset in 0..EMBED_DIM {
-                    embedded.push(
-                        self.embedding_weight[start + offset]
-                            + self.embedding_bias[offset],
-                    );
-                }
+                embedded.extend_from_slice(
+                    &self.embedding_table[start..start + EMBED_DIM],
+                );
             }
         }
 
@@ -311,7 +378,6 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
             TensorData::new(embedded, [batch_size, SEQ_LEN, EMBED_DIM]),
             &self.device,
         );
-        let x = gelu(x);
         let x: Tensor<B, 3> =
             x.reshape([batch_size, TOKENS_PER_BLOCK, CHANNELS_PER_TOKEN]);
         let x = layer_norm_axis_1_3d(
@@ -321,12 +387,7 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
             self.layer_norm_0_bias.clone(),
         );
         let x = x.permute([0, 2, 1]);
-        let x = conv1d(
-            x,
-            self.conv_weight.clone(),
-            Some(self.conv_bias.clone()),
-            ConvOptions::new([1], [0], [1], 1),
-        );
+        let x = self.convolve(x);
         let x = gelu(x);
         let pooled = x.max_dim(2).squeeze_dim(2);
 
@@ -341,20 +402,32 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
         Ok(softmax(logits, 1))
     }
 
-    /// Runs the batch once and splits the probabilities into per-input rows.
-    fn infer_rows(
-        &self,
-        batch_features: &[Vec<i32>],
-    ) -> Result<Vec<Vec<f32>>, DetectionError> {
-        let probs = self.forward(batch_features)?;
-        let flat = probs.into_data().to_vec::<f32>().map_err(|source| {
-            DetectionError::Model {
-                operation: "read tensor output",
-                source: Box::new(source),
-            }
-        })?;
-
-        Ok(flat.chunks(DENSE_OUT).map(|chunk| chunk.to_vec()).collect())
+    fn convolve(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
+        // Native convolution is faster on CPU; the five GEMMs benefit WGPU.
+        if let DispatchDevice::Flex(_) = &self.device {
+            return conv1d(
+                x,
+                self.conv_weight.clone(),
+                Some(self.conv_bias.clone()),
+                ConvOptions::new([1], [0], [1], 1),
+            );
+        }
+        let output_len = TOKENS_PER_BLOCK - CONV_KERNEL + 1;
+        let mut acc: Option<Tensor<B, 3>> = None;
+        for k in 0..CONV_KERNEL {
+            let weight = self.conv_weight.clone().narrow(2, k, 1).reshape([
+                1,
+                CONV_OUT_CHANNELS,
+                CHANNELS_PER_TOKEN,
+            ]);
+            let part = safe_matmul(weight, x.clone().narrow(2, k, output_len));
+            acc = Some(match acc {
+                None => part,
+                Some(previous) => previous + part,
+            });
+        }
+        acc.expect("CONV_KERNEL is five, so the accumulator is populated")
+            + self.conv_bias.clone().reshape([1, CONV_OUT_CHANNELS, 1])
     }
 
     fn final_content_type(
@@ -375,27 +448,28 @@ impl<B: Backend<FloatElem = f32>> MagikaModel<B> {
     }
 }
 
-/// Returns a probability row's entries enumerated and sorted by score descending.
-pub(in crate::detection) fn sorted_row(
-    row: Vec<f32>,
-) -> Result<Vec<(usize, f32)>, DetectionError> {
+/// Returns a probability row's highest-scoring label.
+pub(in crate::detection) fn best_score(
+    row: &[f32],
+) -> Result<(usize, f32), DetectionError> {
     if row.len() != DENSE_OUT {
         return Err(DetectionError::InvalidModel {
             message: format!("unexpected probability row size: {}", row.len()),
         });
     }
-    if row
-        .iter()
-        .any(|score| !score.is_finite() || !(0.0..=1.0).contains(score))
-    {
-        return Err(DetectionError::InvalidModel {
-            message: "probability row contains an invalid score".to_owned(),
-        });
+    let mut best = (0, f32::NEG_INFINITY);
+    for (index, &score) in row.iter().enumerate() {
+        if !score.is_finite() || !(0.0..=1.0).contains(&score) {
+            return Err(DetectionError::InvalidModel {
+                message: "probability row contains an invalid score".to_owned(),
+            });
+        }
+        if score.total_cmp(&best.1).is_gt() {
+            best = (index, score);
+        }
     }
 
-    let mut indexed: Vec<(usize, f32)> = row.into_iter().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    Ok(indexed)
+    Ok(best)
 }
 
 fn tensor_2d_from_flat<B: Backend<FloatElem = f32>>(
@@ -492,12 +566,31 @@ fn gelu<B: Backend<FloatElem = f32>, const D: usize>(
     x * ((inner.tanh() + 1.0) * 0.5)
 }
 
-fn layer_norm_axis_1_3d<B: Backend<FloatElem = f32>>(
+fn layer_norm_axis_1_3d<
+    B: Backend<FloatElem = f32, Device = DispatchDevice>,
+>(
     x: Tensor<B, 3>,
     axis_len: f32,
     weight: Tensor<B, 3>,
     bias: Tensor<B, 3>,
 ) -> Tensor<B, 3> {
+    let batch = x.dims()[0];
+    if batch > 1 && matches!(x.device(), DispatchDevice::Flex(_)) {
+        // SIMD norm0 measured ~0.079 ms at B1 vs ~91 ms at B32: avoid batched broadcasts.
+        return Tensor::cat(
+            (0..batch)
+                .map(|index| {
+                    layer_norm_axis_1_3d(
+                        x.clone().narrow(0, index, 1),
+                        axis_len,
+                        weight.clone(),
+                        bias.clone(),
+                    )
+                })
+                .collect(),
+            0,
+        );
+    }
     let mean = x.clone().sum_dim(1) * (1.0 / axis_len);
     let variance = (x.clone() * x.clone()).sum_dim(1) * (1.0 / axis_len)
         - mean.clone() * mean.clone();

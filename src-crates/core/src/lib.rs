@@ -18,8 +18,14 @@
 pub const PACKAGE_NAME: &str = "akuna";
 
 /// Shared crate-local test helpers.
-#[cfg(all(test, any(feature = "detection", feature = "embedding")))]
+#[cfg(all(
+    test,
+    any(feature = "detection", feature = "embedding", feature = "ocr")
+))]
 mod testkit;
+
+/// HEIC/HEIF byte helpers.
+mod heif;
 
 /// File-type detection APIs.
 #[cfg(feature = "detection")]

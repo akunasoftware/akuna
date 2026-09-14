@@ -29,8 +29,8 @@ full = [
 detection = ["ml", "dep:safetensors"]
 embedding = ["ml", "dep:tokenizers"]
 extraction = ["detection", "dep:tokio", "dep:pdf_oxide", "dep:office_oxide", "dep:rbook", "dep:quick-xml"]
-ml = ["dep:burn", "dep:burn-dispatch", "dep:burn-store", "dep:hf-hub", "dep:wgpu", "dep:pollster"]
-ocr = ["ml", "dep:image", "dep:safetensors"]
+ml = ["dep:burn", "dep:burn-dispatch", "dep:burn-flex", "dep:burn-store", "dep:hf-hub", "dep:wgpu", "dep:pollster"]
+ocr = ["ml", "dep:image", "dep:safetensors", "dep:tokio", "dep:heif-oxide"]
 reranking = ["ml", "dep:tokenizers"]
 
 [package.metadata.docs.rs]
@@ -49,11 +49,14 @@ utoipa = { workspace = true }
 burn = { workspace = true, optional = true }
 # Single runtime-dispatched backend; wgpu (GPU) or flex (CPU) chosen by device.
 burn-dispatch = { workspace = true, optional = true }
+# Enable acceleration on the same Flex backend used by Dispatch, not a second runtime.
+burn-flex = { version = "0.21.0", default-features = false, features = ["std", "simd", "rayon"], optional = true }
 burn-store = { workspace = true, optional = true }
 hf-hub = { workspace = true, optional = true }
 safetensors = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+heif-oxide = { workspace = true, optional = true }
 # Runtime GPU-adapter probe for auto backend selection.
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
@@ -69,3 +72,8 @@ quick-xml = { version = "0.41.0", optional = true }
 onnx-ir = { workspace = true }
 protobuf = { workspace = true }
 safetensors = { workspace = true }
+
+[dev-dependencies]
+# Official Magika reference parity only; no ONNX Runtime in production builds.
+magika = { version = "=1.1.0", default-features = false }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }

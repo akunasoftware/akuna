@@ -356,22 +356,40 @@ impl<B: Backend<FloatElem = f32>> ConvLayer<B> {
         activation: Activation,
         device: &B::Device,
     ) -> Result<Self> {
+        let conv = Self::build_conv(
+            tensors,
+            &format!("{prefix}.convolution.weight"),
+            None,
+            in_ch,
+            out_ch,
+            geom,
+            device,
+        )?;
+        let bn = BnParams::load(
+            tensors,
+            &format!("{prefix}.{norm_suffix}"),
+            out_ch,
+            device,
+        )?;
+        // Fold BN into conv weights so inference is one affine op instead of
+        // a conv plus four elementwise passes over the feature maps:
+        // (x - mean) * A * w + b == x * (w * A) + (b - mean * w * A),
+        // with A = (var + eps).sqrt().recip().
+        let scale =
+            (bn.running_var.clone() + BN_EPS).sqrt().recip() * bn.weight;
+        let bias = bn.bias.clone() - bn.running_mean * scale.clone();
+        let weight = conv.weight.val() * scale.reshape([out_ch, 1, 1, 1]);
         Ok(Self {
-            conv: Self::build_conv(
-                tensors,
-                &format!("{prefix}.convolution.weight"),
-                None,
-                in_ch,
-                out_ch,
-                geom,
-                device,
-            )?,
-            norm: Some(BnParams::load(
-                tensors,
-                &format!("{prefix}.{norm_suffix}"),
-                out_ch,
-                device,
-            )?),
+            conv: Conv2d {
+                weight: Param::from_tensor(weight),
+                bias: Some(Param::from_tensor(bias)),
+                stride: conv.stride,
+                kernel_size: conv.kernel_size,
+                dilation: conv.dilation,
+                groups: conv.groups,
+                padding: conv.padding,
+            },
+            norm: None,
             activation,
         })
     }

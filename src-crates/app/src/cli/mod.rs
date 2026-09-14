@@ -1,11 +1,9 @@
 //! Command-line interface commands.
 
 mod extraction;
+mod indexing;
 
-use crate::{
-    APP_NAME,
-    tracing::{LOG_LEVELS, setup_tracing},
-};
+use crate::tracing::{LOG_LEVELS, setup_tracing};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -25,14 +23,18 @@ struct Cli {
 enum Command {
     /// Extract structured metadata & content from a file.
     Extract(extraction::ExtractCommand),
+
+    /// Index contents of a directory for search.
+    Index(indexing::IndexCommand),
 }
 
 /// Runs the parsed CLI command.
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
-    setup_tracing(APP_NAME, cli.log_level.as_deref());
+    setup_tracing(crate::APP_NAME, cli.log_level.as_deref());
 
     match cli.command {
         Command::Extract(command) => command.run().await,
+        Command::Index(command) => command.run().await,
     }
 }

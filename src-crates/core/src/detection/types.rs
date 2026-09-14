@@ -74,24 +74,24 @@ impl FileType {
 
     /// Builds a rule-resolved type from the vendored label metadata.
     pub(crate) fn ruled(content_type: ContentType) -> Self {
-        Self::new(content_type, 1.0, DetectionOrigin::Rule)
+        Self::ruled_info(content_type.info())
+    }
+
+    /// Builds a rule-resolved type from file type metadata.
+    pub(crate) fn ruled_info(info: &VendorTypeInfo) -> Self {
+        Self {
+            info: FileTypeInfo::from_vendor(info),
+            confidence: 1.0,
+            origin: DetectionOrigin::Rule,
+        }
     }
 
     /// Builds a model-resolved type from the vendored label metadata.
     pub(crate) fn inferred(content_type: ContentType, confidence: f32) -> Self {
-        Self::new(content_type, confidence, DetectionOrigin::Model)
-    }
-
-    /// Converts one final vendored content type into the core result shape.
-    fn new(
-        content_type: ContentType,
-        confidence: f32,
-        origin: DetectionOrigin,
-    ) -> Self {
         Self {
             info: FileTypeInfo::from_vendor(content_type.info()),
             confidence,
-            origin,
+            origin: DetectionOrigin::Model,
         }
     }
 }

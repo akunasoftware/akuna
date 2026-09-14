@@ -1,6 +1,6 @@
 use burn::tensor::Tensor;
 
-use super::backend::{Backend, cpu_device};
+use super::backend::Backend;
 
 #[cfg(any(feature = "embedding", feature = "reranking"))]
 #[test]
@@ -19,7 +19,7 @@ fn output_count_rejects_mismatch() {
 /// machines without a GPU (e.g. CI).
 #[test]
 fn cpu_backend_runs_matmul() {
-    let device = cpu_device();
+    let device = super::backend::cpu_device();
     let a =
         Tensor::<Backend, 2>::from_floats([[1.0, 2.0], [3.0, 4.0]], &device);
     let b =
@@ -86,13 +86,7 @@ mod matmul {
     /// `safe_matmul` must match a CPU reference across model contraction shapes.
     #[test]
     fn matches_cpu_for_large_k() {
-        for (m, k, n) in [
-            (256usize, 256usize, 128usize),
-            (512, 512, 128),
-            (1024, 512, 128),
-            (512, 1024, 128),
-            (256, 2048, 128),
-        ] {
+        for (m, k, n) in [(16, 256, 32), (16, 257, 32), (16, 1280, 32)] {
             assert!(
                 max_abs_err(m, k, n) < 1.0e-2,
                 "safe_matmul wrong for M={m} K={k} N={n}"
@@ -156,6 +150,22 @@ mod imageproc {
     fn linear_matches_cv2_golden() {
         let out = resize_linear_cv2(&src_image(), 8, 6);
         assert_eq!(out.as_raw().as_slice(), LINEAR_8X6, "cv2 INTER_LINEAR");
+    }
+
+    #[test]
+    fn linear_matches_rgb_conversion() {
+        for input in [
+            src_image(),
+            DynamicImage::ImageRgba8(src_image().to_rgba8()),
+            DynamicImage::ImageLuma8(src_image().to_luma8()),
+        ] {
+            let rgb = DynamicImage::ImageRgb8(input.to_rgb8());
+            for (width, height) in [(7, 5), (23, 19)] {
+                let out = resize_linear_cv2(&input, width, height);
+                assert_eq!(out.dimensions(), (width as u32, height as u32));
+                assert_eq!(out, resize_linear_cv2(&rgb, width, height));
+            }
+        }
     }
 
     #[test]

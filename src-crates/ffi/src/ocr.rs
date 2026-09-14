@@ -35,6 +35,18 @@ pub enum OcrError {
         /// Human-readable error message.
         message: String,
     },
+    /// HEIC/HEIF image decode failure.
+    #[error("{message}")]
+    DecodeHeifImage {
+        /// Human-readable error message.
+        message: String,
+    },
+    /// Image decoded to a pixel buffer that does not match its dimensions.
+    #[error("{message}")]
+    InvalidImage {
+        /// Human-readable error message.
+        message: String,
+    },
     /// Inference failure.
     #[error("{message}")]
     Inference {
@@ -285,6 +297,14 @@ impl From<core_ocr::OcrError> for OcrError {
             },
             core_ocr::OcrError::DecodeImage { source } => Self::DecodeImage {
                 message: source.to_string(),
+            },
+            core_ocr::OcrError::HeifDecodeImage { source } => {
+                Self::DecodeHeifImage {
+                    message: source.to_string(),
+                }
+            }
+            core_ocr::OcrError::InvalidImage => Self::InvalidImage {
+                message: value.to_string(),
             },
             core_ocr::OcrError::Load { source } => Self::Load {
                 message: source.to_string(),

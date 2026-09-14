@@ -10,7 +10,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::extraction::{
-    DocumentContent, ExtractionConfig, ExtractionMetadata,
+    DetectionOrigin, DocumentContent, ExtractionConfig, ExtractionMetadata,
     ExtractionPipelineStepKind, ExtractionResult, FileExtractionError,
     extractors, metadata, pipeline,
 };
@@ -54,7 +54,10 @@ async fn from_bytes_with_source_path(
         let duration_ms = started.elapsed().as_millis() as u64;
         let step = pipeline::step(
             ExtractionPipelineStepKind::Detection,
-            "magika",
+            match metadata.origin {
+                DetectionOrigin::Rule => "rule",
+                DetectionOrigin::Model => "magika",
+            },
             duration_ms,
             BTreeMap::from([("types".to_owned(), 1)]),
         );
@@ -70,8 +73,17 @@ async fn from_bytes_with_source_path(
             None
         };
 
-    let (returned_text, parts) = if let Some(content) = content {
-        let text = config.return_content.then(|| content.text()).flatten();
+    let (returned_text, parts) = if let Some(mut content) = content {
+        let text = config
+            .return_content
+            .then(|| {
+                if config.return_parts {
+                    content.text()
+                } else {
+                    content.take_text()
+                }
+            })
+            .flatten();
         pipeline.extend(content.pipeline);
         (text, config.return_parts.then_some(content.parts))
     } else {
@@ -152,7 +164,8 @@ async fn extract_content(
 
         // Images use OCR when the feature is enabled.
         #[cfg(feature = "ocr")]
-        "image/bmp" | "image/jpeg" | "image/png" | "image/tiff" => {
+        "image/heic" | "image/heif" | "image/jpeg" | "image/png"
+        | "image/webp" => {
             return extractors::ocr::extract_bytes(bytes, &_config.ocr).await;
         }
 
@@ -174,7 +187,7 @@ async fn extract_content(
             started.elapsed().as_millis() as u64,
             BTreeMap::from([
                 ("parts".to_owned(), content.parts.len() as u64),
-                ("texts".to_owned(), u64::from(content.text().is_some())),
+                ("texts".to_owned(), u64::from(content.has_text())),
             ]),
         ),
     );

@@ -19,6 +19,17 @@ pub enum OcrError {
         source: image::ImageError,
     },
 
+    /// OCR input HEIC/HEIF image could not be decoded.
+    #[error("Failed to decode OCR input HEIC/HEIF image")]
+    HeifDecodeImage {
+        /// Underlying HEIF decoder error.
+        source: heif_oxide::HeifError,
+    },
+
+    /// OCR input decoded to a pixel buffer that does not match its dimensions.
+    #[error("OCR input image has an invalid pixel buffer")]
+    InvalidImage,
+
     /// OCR model or detector failed to load.
     #[error("OCR model load failed")]
     Load {

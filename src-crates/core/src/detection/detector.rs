@@ -1,23 +1,56 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use burn_dispatch::DispatchDevice;
 
 use crate::detection::models::magika::MagikaModel;
 use crate::detection::vendor::model as vendor_model;
+#[cfg(any(feature = "extraction", test))]
+use crate::detection::vendor::{content, file::TypeInfo as VendorTypeInfo};
 use crate::detection::{DetectionError, FileType};
 use crate::ml::backend::{self, Backend};
 
+#[cfg(test)]
+mod tests;
+
+static DEFAULT_MODEL: Mutex<Option<Arc<MagikaModel<Backend>>>> =
+    Mutex::new(None);
+
+// Files not well supported by Magika.
+#[cfg(any(feature = "extraction", test))]
+const NIX: VendorTypeInfo = VendorTypeInfo {
+    label: "nix",
+    mime_type: "text/x-nix",
+    group: "code",
+    description: "Nix source",
+    extensions: &["nix"],
+    is_text: true,
+};
+
 /// Detects file types from bytes and files.
 pub struct FileTypeDetector {
-    model: MagikaModel<Backend>,
+    model: Arc<MagikaModel<Backend>>,
 }
 
 impl FileTypeDetector {
-    /// Builds a detector on the default device.
+    /// Builds a detector sharing the process-wide CPU model tuned for single-file detection.
     pub fn new() -> Result<Self, DetectionError> {
-        Self::new_on(backend::active_device())
+        // CPU is faster for single-file inference; explicit devices bypass this
+        // cache. Only construction is locked, never inference.
+        let mut model =
+            DEFAULT_MODEL.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(model) = model.as_ref() {
+            return Ok(Self {
+                model: Arc::clone(model),
+            });
+        }
+
+        // Publish only a complete model so errors and panics can be retried.
+        let detector = Self::new_on(backend::cpu_device())?;
+        *model = Some(Arc::clone(&detector.model));
+        Ok(detector)
     }
 
     /// Builds a detector on a specific device.
@@ -25,7 +58,9 @@ impl FileTypeDetector {
         device: DispatchDevice,
     ) -> Result<Self, DetectionError> {
         let model = MagikaModel::<Backend>::from_embedded(&device)?;
-        Ok(Self { model })
+        Ok(Self {
+            model: Arc::new(model),
+        })
     }
 
     /// Identifies the file type of raw bytes (blocking).
@@ -34,6 +69,45 @@ impl FileTypeDetector {
         bytes: &[u8],
     ) -> Result<FileType, DetectionError> {
         self.model.identify_bytes(bytes)
+    }
+
+    /// Identifies valid UTF-8 from a known filename extension.
+    #[cfg(any(feature = "extraction", test))]
+    pub(crate) fn identify_utf8_extension(
+        extension: &str,
+        bytes: &[u8],
+    ) -> Option<FileType> {
+        let extension = extension.trim_start_matches('.');
+        let lowercase = extension
+            .bytes()
+            .any(|byte| byte.is_ascii_uppercase())
+            .then(|| extension.to_ascii_lowercase());
+        let info = match lowercase.as_deref().unwrap_or(extension) {
+            // File types worth fast-path skipping Magika.
+            "css" => &content::CSS,
+            "csv" => &content::CSV,
+            "go" => &content::GO,
+            "ini" => &content::INI,
+            "java" => &content::JAVA,
+            "js" => &content::JAVASCRIPT,
+            "json" => &content::JSON,
+            "md" => &content::MARKDOWN,
+            "php" => &content::PHP,
+            "py" => &content::PYTHON,
+            "rb" => &content::RUBY,
+            "rs" => &content::RUST,
+            "sh" => &content::SHELL,
+            "sql" => &content::SQL,
+            "toml" => &content::TOML,
+            "ts" => &content::TYPESCRIPT,
+            "tsv" => &content::TSV,
+            "txt" => &content::TXT,
+            "yaml" | "yml" => &content::YAML,
+            "nix" => &NIX,
+            _ => return None,
+        };
+        std::str::from_utf8(bytes).ok()?;
+        Some(FileType::ruled_info(info))
     }
 
     /// Identifies the file type of a file path (blocking).

@@ -1,23 +1,42 @@
 //! Shared ML backend selection.
 
+#[cfg(any(
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking",
+    all(test, feature = "detection")
+))]
 use std::sync::OnceLock;
 
 use burn_dispatch::{Dispatch, DispatchDevice};
+use burn_flex::FlexDevice;
 
 /// Shared ML backend.
 pub(crate) type Backend = Dispatch;
 
 /// A CPU device.
 pub(crate) fn cpu_device() -> DispatchDevice {
-    DispatchDevice::Flex(Default::default())
+    DispatchDevice::Flex(FlexDevice)
 }
 
 /// A GPU device.
+#[cfg(any(
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking",
+    all(test, feature = "detection")
+))]
 pub(crate) fn gpu_device() -> DispatchDevice {
     DispatchDevice::Wgpu(Default::default())
 }
 
 /// Default ML device.
+#[cfg(any(
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking",
+    all(test, feature = "detection")
+))]
 pub(crate) fn active_device() -> DispatchDevice {
     if gpu_available() {
         gpu_device()
@@ -27,11 +46,23 @@ pub(crate) fn active_device() -> DispatchDevice {
 }
 
 /// Whether a usable GPU is present.
+#[cfg(any(
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking",
+    all(test, feature = "detection")
+))]
 pub(crate) fn gpu_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(probe_gpu)
 }
 
+#[cfg(any(
+    feature = "embedding",
+    feature = "ocr",
+    feature = "reranking",
+    all(test, feature = "detection")
+))]
 fn probe_gpu() -> bool {
     // Probe the single graphics API cubecl-wgpu's `AutoGraphicsApi` selects
     // (Metal on macOS, Vulkan elsewhere), so we never report an adapter for a

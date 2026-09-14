@@ -1,5 +1,5 @@
 use anyhow::Result;
-use burn::tensor::{Tensor, backend::Backend};
+use burn::tensor::{Tensor, Transaction, backend::Backend};
 
 use crate::ocr::models::pp_ocr::spec::{
     PpOcrDetectionConfig, PpOcrRecognitionConfig,
@@ -128,13 +128,16 @@ pub(crate) fn postprocess_detector<B: Backend<FloatElem = f32>>(
     Ok(boxes)
 }
 
-pub(crate) fn postprocess_recognizer<B: Backend<FloatElem = f32>>(
+/// Decodes CTC logits for a whole recognizer batch in one device readback.
+/// Each batch element decodes independently; single crops pass a batch of 1.
+pub(crate) fn postprocess_recognizer<
+    B: Backend<FloatElem = f32, IntElem = i32>,
+>(
     logits: Tensor<B, 3>,
     dictionary: &[String],
     config: &PpOcrRecognitionConfig,
-) -> Result<RecognizedText> {
-    let [_batch, dim1, dim2] = logits.dims();
-    let values = logits.into_data().to_vec::<f32>()?;
+) -> Result<Vec<RecognizedText>> {
+    let [batch, dim1, dim2] = logits.dims();
     let classes = if dim2 == config.num_classes {
         dim2
     } else {
@@ -145,32 +148,56 @@ pub(crate) fn postprocess_recognizer<B: Backend<FloatElem = f32>>(
     } else {
         dim2
     };
-    if classes == 0 || steps == 0 {
-        return Ok(RecognizedText {
-            text: String::new(),
-            confidence: 0.0,
-        });
+    if batch == 0 || classes == 0 || steps == 0 {
+        return Ok(vec![
+            RecognizedText {
+                text: String::new(),
+                confidence: 0.0
+            };
+            batch
+        ]);
+    }
+    let (scores, indices) = if dim2 == config.num_classes {
+        logits.max_dim_with_indices(2)
+    } else {
+        logits.max_dim_with_indices(1)
+    };
+    let mut data = Transaction::default()
+        .register(scores)
+        .register(indices)
+        .try_execute()?
+        .into_iter();
+    let scores = data
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("recognizer scores are missing"))?
+        .to_vec::<f32>()?;
+    let indices = data
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("recognizer indices are missing"))?
+        .to_vec::<i32>()?;
+    if scores.len() < batch * steps || indices.len() < batch * steps {
+        anyhow::bail!("recognizer output has fewer steps than expected");
     }
 
+    (0..batch)
+        .map(|element| {
+            let range = element * steps..(element + 1) * steps;
+            decode_ctc(&scores[range.clone()], &indices[range], dictionary)
+        })
+        .collect()
+}
+
+fn decode_ctc(
+    scores: &[f32],
+    indices: &[i32],
+    dictionary: &[String],
+) -> Result<RecognizedText> {
     let mut decoded = String::new();
     let mut confidence_sum = 0.0;
     let mut confidence_count = 0usize;
     let mut previous_index = None;
-    for step in 0..steps {
-        let mut best_index = 0usize;
-        let mut best_score = f32::NEG_INFINITY;
-        for class_index in 0..classes {
-            let value_index = if dim2 == config.num_classes {
-                step * classes + class_index
-            } else {
-                class_index * steps + step
-            };
-            let score = values[value_index];
-            if score > best_score {
-                best_score = score;
-                best_index = class_index;
-            }
-        }
+    for (&best_score, &best_index) in scores.iter().zip(indices) {
+        let best_index = usize::try_from(best_index)?;
         if best_index != 0
             && Some(best_index) != previous_index
             && let Some(value) = dictionary.get(best_index - 1)
